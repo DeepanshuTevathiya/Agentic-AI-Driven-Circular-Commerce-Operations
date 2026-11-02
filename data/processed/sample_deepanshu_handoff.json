@@ -1,0 +1,38 @@
+[
+  {
+    "store_id": "DS_BLR_INDIRANAGAR",
+    "sku_id": "SKU_BREAD_WHITE",
+    "date": "2024-11-17",
+    "service_level_target": 0.95,
+    "supplier_lead_time_days": 1.5,
+    "supplier_lead_time_std": 0.3,
+    "safety_stock_units": 33.41,
+    "reorder_point_units": 118.42,
+    "recommended_po_quantity": 0.0,
+    "po_urgency": "HOLD"
+  },
+  {
+    "store_id": "DS_BLR_JAYANAGAR",
+    "sku_id": "SKU_BUNS_6PK",
+    "date": "2024-11-11",
+    "service_level_target": 0.95,
+    "supplier_lead_time_days": 1.5,
+    "supplier_lead_time_std": 0.3,
+    "safety_stock_units": 8.56,
+    "reorder_point_units": 29.36,
+    "recommended_po_quantity": 0.0,
+    "po_urgency": "HOLD"
+  },
+  {
+    "store_id": "DS_BLR_HSR_LAYOUT",
+    "sku_id": "SKU_CURD_400G",
+    "date": "2024-11-19",
+    "service_level_target": 0.95,
+    "supplier_lead_time_days": 1.5,
+    "supplier_lead_time_std": 0.3,
+    "safety_stock_units": 16.68,
+    "reorder_point_units": 52.74,
+    "recommended_po_quantity": 0.0,
+    "po_urgency": "HOLD"
+  }
+]

@@ -1,0 +1,29 @@
+[
+  {
+    "store_id": "DS_BLR_INDIRANAGAR",
+    "sku_id": "SKU_BREAD_WHITE",
+    "date": "2024-11-17",
+    "overstock_risk_units": 27.99,
+    "markdown_discount_pct": 0.0,
+    "food_rescue_eligible": false,
+    "circularity_action": "STANDARD_PRICING"
+  },
+  {
+    "store_id": "DS_BLR_JAYANAGAR",
+    "sku_id": "SKU_BUNS_6PK",
+    "date": "2024-11-11",
+    "overstock_risk_units": 13.26,
+    "markdown_discount_pct": 20.0,
+    "food_rescue_eligible": false,
+    "circularity_action": "DYNAMIC_MARKDOWN_20"
+  },
+  {
+    "store_id": "DS_BLR_HSR_LAYOUT",
+    "sku_id": "SKU_CURD_400G",
+    "date": "2024-11-19",
+    "overstock_risk_units": 24.8,
+    "markdown_discount_pct": 0.0,
+    "food_rescue_eligible": false,
+    "circularity_action": "STANDARD_PRICING"
+  }
+]

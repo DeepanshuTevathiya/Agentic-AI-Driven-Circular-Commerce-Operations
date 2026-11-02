@@ -1,0 +1,55 @@
+=================================================================
+STEP 3 — CONSUMER HOUSEHOLD DEPLETION & REPLENISHMENT REPORT
+Role: Arunesh Sharma (Role #5) — AI/ML Demand & Consumption Lead
+=================================================================
+
+1. PRIMARY SURVEY INTEGRATION (NITIN RAJ'S 76 RESPONSES):
+  • Empirical Target Horizon : tau = 5.0 days (76.3% usefulness affirmation on pantry staples)
+  • Fast Perishables Horizon : tau = 1.5 days (adapted for ultra-fast milk/bread cycles)
+  • Human-in-the-Loop Gating : Enforced (67.1% demand final approval gate)
+  • Zero-Click Blind Order   : Suppressed (Trust score 2.43/5 mandates 1-click cart pre-fill)
+  • Explainable Notifications: Included in all recommendation payloads (3.87/5)
+
+2. QUANTITATIVE VERIFICATION BENCHMARKS:
+  • Test 3.1: Combined Advance Recall    : 80.15% (Target: >= 80.0%) -> PASSED [OK]
+  • Test 3.1: 5-Day Pantry Staples Recall: 98.37%
+  • Test 3.2: False Alarm Rate (<55% used): 5.15% (Target: <= 12.0%) -> PASSED [OK]
+  • Test 3.3: Calibration Error ECE      : 0.03 (Target: <= 0.080) -> PASSED [OK]
+
+3. UPSTREAM HANDSHAKE WITH MACRO DEMAND AGENT (STEP 2):
+  • Pre-order aggregation: Accepted customer replenishment preorders are aggregated
+    into committed dark-store demand buffers (D_committed) to de-risk macro stock spikes.
+
+4. OVERALL STEP 3 STATUS:
+  STATUS: PASSED [OK]
+
+-----------------------------------------------------------------
+EXECUTION TRACE LOG:
+
+── Loading Primary Research Survey Priors (Nitin Raj's 76 responses)...
+  ✓ Survey 5-Day Runout Useful: 76.3%
+  ✓ Survey Human Approval Req : 51.3%
+  ✓ Setting Micro-Agent Target Window: tau = 5.0 days | Policy: HITL Gated Cart Pre-fill
+
+── Simulating longitudinal consumption replay for 400 Bangalore households...
+  ✓ Generated 173,443 longitudinal purchase events across 400 households
+
+── Fitting Bayesian Weibull Renewal models per Household + SKU...
+  ✓ Fitted 2,172 distinct Household-SKU renewal profiles
+  ✓ Consumer agent engine saved -> C:\Projects\Accesco project\outputs\consumer_renewal_agent.joblib
+
+── Running Step 3 Verification Suite on Holdout Longitudinal Replay...
+
+── TEST 3.1 — Runout Notification Recall Benchmarks
+  ✓ Combined Advance Recall       : 80.15%  (Target: >= 80.0%)
+  ✓ 5-Day Pantry Recall (>=6d)     : 98.37%  (Direct Survey Question Target)
+  ✓ Successfully Notified Cycles  : 1,603 out of 2,000 total cycles
+
+── TEST 3.2 — False Alarm Rate (Alerting when Household Stock > 55% remaining)
+  ✓ False Alarm Rate              : 5.15%  (Target: <= 12.0%)
+  ✓ False Alarms Triggered        : 527 out of 10,228 alert firings
+
+── TEST 3.3 — Expected Calibration Error (ECE)
+  ✓ Expected Calibration Error: 0.0300  (Target: <= 0.080)
+  ✓ Saved consumer alerts sample -> C:\Projects\Accesco project\data\processed\consumer_agent_alerts_step3.parquet
+  ✓ Aggregated upstream committed pre-orders (8,397 groups) -> C:\Projects\Accesco project\data\processed\committed_preorders_step3.parquet

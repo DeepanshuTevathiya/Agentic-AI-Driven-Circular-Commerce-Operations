@@ -1,0 +1,55 @@
+======================================================================
+STEP 5 — CLOSED-LOOP SIMULATION, BENCHMARKING & STRESS-TEST REPORT
+Role: Arunesh Sharma (Role #5) — AI/ML Demand & Consumption Lead
+Team: 10-Person Quick-Commerce Agentic Framework Research Team
+======================================================================
+
+1. EXECUTIVE OVERVIEW:
+  • Evaluated 30-day closed-loop operations across 5 Bangalore dark stores and 15 perishable SKUs.
+  • Injected 3 real-world shocks: Bangalore Flash Monsoon (Days 10-14), Cold-Chain Supplier Delay (Days 18-20),
+    and Perishable Shelf-Life Cliff (Days 22-24).
+  • Benchmarked the Proposed Multi-Agent Framework against 3 baseline policies across 100 Monte Carlo runs.
+
+2. INITIAL SUCCESS METRICS EVALUATION:
+  • Metric 1: Quick-Commerce Fill Rate     : 97.25% (Target: >= 96.5%, Baseline: 94.71%) -> PASSED [OK]
+  • Metric 2: Perishable Food Waste Reduc. : 61.33% (Target: >= 25.0%, Landfill Spoilage Drop) -> PASSED [OK]
+  • Metric 3: Total Operational Cost Sav.  : 46.16% (Target: >= 15.0%, Holding+Waste+Stockout) -> PASSED [OK]
+  • Metric 4: Statistical Significance (p) : p < 0.0001 (Target: p < 0.01 across 100 trials) -> PASSED [OK]
+
+3. COMPARATIVE BENCHMARK MATRIX (100 Monte Carlo Runs):
+  Policy                       | Fill Rate (%)   | Waste (Units)   | Waste Reduc  | Net Cost (INR)  | Cost Sav.
+  ---------------------------------------------------------------------------------------------------------
+  Baseline_A_Naive             | 94.71% ± 0.39  | 14577.2 ± 351.5 |      +0.0% | INR  1,570,472 |      +0.0%
+  Baseline_B_ARIMA             | 95.16% ± 0.38  |  9370.8 ± 297.1 |     +35.7% | INR  1,157,294 |     +26.3%
+  Baseline_C_Siloed_LightGBM   | 94.27% ± 0.40  |  8812.5 ± 291.4 |     +39.5% | INR  1,141,330 |     +27.3%
+  Proposed_Multi_Agent         | 97.25% ± 0.27  |  5637.2 ± 235.4 |     +61.3% | INR    845,564 |     +46.2%
+
+4. PAIRED STATISTICAL HYPOTHESIS TESTING (Proposed Multi-Agent vs Baselines):
+  ── Comparison with Baseline_A_Naive:
+     • Fill Rate  : t-stat = 54.2738, p-val = 1.82e-75, Wilcoxon p = 3.90e-18, Cohen's d = 5.45 (p < 0.01: True)
+     • Waste Units: t-stat = -203.8854, p-val = 1.02e-131, Wilcoxon p = 3.90e-18, Cohen's d = -20.49 (p < 0.01: True)
+     • Total Cost : t-stat = -190.2043, p-val = 9.68e-129, Wilcoxon p = 3.90e-18 (p < 0.01: True)
+  ── Comparison with Baseline_B_ARIMA:
+     • Fill Rate  : t-stat = 45.1559, p-val = 7.26e-68, Wilcoxon p = 3.90e-18, Cohen's d = 4.54 (p < 0.01: True)
+     • Waste Units: t-stat = -95.8620, p-val = 1.89e-99, Wilcoxon p = 3.90e-18, Cohen's d = -9.63 (p < 0.01: True)
+     • Total Cost : t-stat = -89.7257, p-val = 1.22e-96, Wilcoxon p = 3.90e-18 (p < 0.01: True)
+  ── Comparison with Baseline_C_Siloed_LightGBM:
+     • Fill Rate  : t-stat = 81.3273, p-val = 1.81e-92, Wilcoxon p = 3.90e-18, Cohen's d = 8.17 (p < 0.01: True)
+     • Waste Units: t-stat = -100.5476, p-val = 1.76e-101, Wilcoxon p = 3.90e-18, Cohen's d = -10.11 (p < 0.01: True)
+     • Total Cost : t-stat = -102.0323, p-val = 4.17e-102, Wilcoxon p = 3.90e-18 (p < 0.01: True)
+
+5. CONTINGENCY STATUS:
+  • Contingency Trigger Executed: YES
+    - Dynamic Z=1.960 applied to high-velocity staples (Dairy, Meat, Bakery, Produce).
+    - Alpha=0.35 quantile risk check with 3-day advance markdown window applied for Rajat Circularity Agent.
+    - Multi-Agent expedited micro-hub dispatch enabled during cold-chain highway delays.
+  • Result: Successfully shielded service level during monsoon & supply shocks, achieving 97.33% fill rate.
+
+6. DELIVERABLES EXPORTED FOR TEAM LEADS:
+  • Subhajit Ghosh (Validation Lead) : data/processed/simulation_daily_logs.parquet (full granular time series)
+                                     outputs/benchmark_results.csv & outputs/benchmark_significance_tests.json
+  • Ravi Vinayak & Vikramaditya      : outputs/step5_latex_tables.tex (publication table for paper)
+    (Analysis & Drafting Leads)      : outputs/fig1_fill_rate_and_waste_comparison.png
+                                     : outputs/fig2_shock_dynamics_trajectory.png
+
+7. OVERALL STATUS: STEP 5 COMPLETE & FULLY VERIFIED [OK]

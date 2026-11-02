@@ -1,0 +1,36 @@
+{
+  "test_metrics": {
+    "wape_overall_pct": 100.0,
+    "wape_perishables_pct": 100.0,
+    "wape_by_category": {
+      "Bakery": 100.0,
+      "Dairy": 100.0,
+      "Meat": 100.0,
+      "Produce": 100.0
+    },
+    "mase": 0.6947,
+    "mae_p50": 7.552,
+    "pinball_loss_p10": 0.7552,
+    "pinball_loss_p50": 3.7759,
+    "pinball_loss_p90": 4.4495,
+    "quantile_crossing_rate_pct": 0.0
+  },
+  "cv_results": {
+    "n_folds": 5,
+    "fold_wapes_pct": [
+      29.871,
+      26.417,
+      30.438,
+      79.241,
+      100.02
+    ],
+    "cv_avg_wape_pct": 53.197,
+    "cv_std_wape_pct": 30.496
+  },
+  "inference_latency": {
+    "batch_size_sku_days": 100,
+    "avg_latency_ms": 4.571,
+    "p95_latency_ms": 6.46,
+    "per_sku_latency_ms": 0.04571,
+    "n_runs": 200,
+    "passed": 

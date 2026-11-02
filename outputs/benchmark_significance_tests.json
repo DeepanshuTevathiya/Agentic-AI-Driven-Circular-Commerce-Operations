@@ -1,0 +1,80 @@
+{
+  "Baseline_A_Naive": {
+    "fill_rate": {
+      "t_stat": 54.27384032406745,
+      "p_value_t": 1.8151117517595496e-75,
+      "wilcoxon_stat": 0.0,
+      "p_value_wilcoxon": 3.8965598450959084e-18,
+      "cohens_d": 5.454726190502808,
+      "statistically_significant": true
+    },
+    "waste_units": {
+      "t_stat": -203.8854295642356,
+      "p_value_t": 1.0164927683457177e-131,
+      "wilcoxon_stat": 0.0,
+      "p_value_wilcoxon": 3.8965598450959084e-18,
+      "cohens_d": -20.49125666924253,
+      "statistically_significant": true
+    },
+    "net_cost": {
+      "t_stat": -190.2042796575053,
+      "p_value_t": 9.682638801491466e-129,
+      "wilcoxon_stat": 0.0,
+      "p_value_wilcoxon": 3.8965598450959084e-18,
+      "cohens_d": -19.116249367993134,
+      "statistically_significant": true
+    }
+  },
+  "Baseline_B_ARIMA": {
+    "fill_rate": {
+      "t_stat": 45.15594810171342,
+      "p_value_t": 7.262286453434507e-68,
+      "wilcoxon_stat": 0.0,
+      "p_value_wilcoxon": 3.8965598450959084e-18,
+      "cohens_d": 4.538343542610442,
+      "statistically_significant": true
+    },
+    "waste_units": {
+      "t_stat": -95.86195056986146,
+      "p_value_t": 1.8876026117775065e-99,
+      "wilcoxon_stat": 0.0,
+      "p_value_wilcoxon": 3.8965598450959084e-18,
+      "cohens_d": -9.634488536722015,
+      "statistically_significant": true
+    },
+    "net_cost": {
+      "t_stat": -89.72565281102621,
+      "p_value_t": 1.2248356317135696e-96,
+      "wilcoxon_stat": 0.0,
+      "p_value_wilcoxon": 3.8965598450959084e-18,
+      "cohens_d": -9.017767407390037,
+      "statistically_significant": true
+    }
+  },
+  "Baseline_C_Siloed_LightGBM": {
+    "fill_rate": {
+      "t_stat": 81.32725059333876,
+      "p_value_t": 1.8086978260757683e-92,
+      "wilcoxon_stat": 0.0,
+      "p_value_wilcoxon": 3.8965598450959084e-18,
+      "cohens_d": 8.173696225736766,
+      "statistically_significant": true
+    },
+    "waste_units": {
+      "t_stat": -100.54764603930174,
+      "p_value_t": 1.7568436393221048e-101,
+      "wilcoxon_stat": 0.0,
+      "p_value_wilcoxon": 3.8965598450959084e-18,
+      "cohens_d": -10.10541865047964,
+      "statistically_significant": true
+    },
+    "net_cost": {
+      "t_stat": -102.0322716695028,
+      "p_value_t": 4.173474640341921e-102,
+      "wilcoxon_stat": 0.0,
+      "p_value_wilcoxon": 3.8965598450959084e-18,
+      "cohens_d": -10.25462914046515,
+      "statistically_significant": true
+    }
+  }
+}

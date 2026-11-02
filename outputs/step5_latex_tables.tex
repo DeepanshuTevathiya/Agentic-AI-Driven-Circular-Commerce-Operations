@@ -1,0 +1,20 @@
+% =====================================================================
+% TABLE 1: CLOSED-LOOP QUICK-COMMERCE SIMULATION RESULTS (100 RUNS)
+% Authors: Arunesh Sharma, Subhajit Ghosh, Ravi Vinayak, et al.
+% =====================================================================
+
+\begin{table*}[t]
+\centering
+\caption{Closed-Loop Operational Performance Comparison Across 100 Monte Carlo Simulation Runs under Bangalore Monsoon, Cold-Chain Delay, and Perishability Cliff Shocks.}
+\label{tab:simulation_results}
+\begin{tabular}{lcccccc}
+\hline\hline
+\textbf{Policy / Architecture} & \textbf{Fill Rate (\%)} & \textbf{Waste Units} & \textbf{Waste Red. (\%)} & \textbf{Net Cost (INR)} & \textbf{Cost Sav. (\%)} & \textbf{Significance ($p$)} \\
+\hline
+Baseline A Naive & 94.71 $\pm$ 0.39 & 14577.2 $\pm$ 351.5 & +0.0\% & 1,570,472 & +0.0\% & $p < 0.001$ \\
+Baseline B ARIMA & 95.16 $\pm$ 0.38 & 9370.8 $\pm$ 297.1 & +35.7\% & 1,157,294 & +26.3\% & $p < 0.001$ \\
+Baseline C Siloed LightGBM & 94.27 $\pm$ 0.40 & 8812.5 $\pm$ 291.4 & +39.5\% & 1,141,330 & +27.3\% & $p < 0.001$ \\
+\textbf{Proposed Multi Agent} & \textbf{97.25 $\pm$ 0.27} & \textbf{5637.2 $\pm$ 235.4} & \textbf{+61.3\%} & \textbf{845,564} & \textbf{+46.2\%} & \textbf{---} \\
+\hline\hline
+\end{tabular}
+\end{table*}

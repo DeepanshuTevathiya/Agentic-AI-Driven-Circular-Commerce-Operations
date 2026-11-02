@@ -1,0 +1,5 @@
+Policy,Mean_Fill_Rate_Pct,Std_Fill_Rate_Pct,Mean_Waste_Units,Std_Waste_Units,Waste_Reduction_Pct,Mean_Net_Cost_INR,Std_Net_Cost_INR,Cost_Savings_Pct
+Baseline_A_Naive,94.71,0.39,14577.2,351.5,0.0,1570472.0,28913.0,0.0
+Baseline_B_ARIMA,95.16,0.38,9370.8,297.1,35.72,1157294.0,26273.0,26.31
+Baseline_C_Siloed_LightGBM,94.27,0.4,8812.5,291.4,39.55,1141330.0,28121.0,27.33
+Proposed_Multi_Agent,97.25,0.27,5637.2,235.4,61.33,845564.0,21254.0,46.16

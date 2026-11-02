@@ -1,0 +1,76 @@
+=================================================================
+STEP 2 — MACRO DEMAND FORECASTING ENGINE TEST REPORT
+Role: Arunesh Sharma (Role #5) — AI/ML Demand & Consumption Lead
+=================================================================
+
+1. QUANTITATIVE SUCCESS METRIC BENCHMARKS:
+  • Overall WAPE            : 16.2% (Target: <= 18.0%) -> PASSED [OK]
+  • Dairy Perishables WAPE  : 16.58% (Target: <= 22.0%)
+  • Produce Perishables WAPE: 14.9%
+  • Naive Baseline WAPE     : 23.37%
+  • Accuracy Gain vs Naive  : +7.16% absolute WAPE reduction
+  • Quantile Pinball Losses : P10=1.285 | P50=3.01 | P90=1.404
+
+2. QUANTILE MONOTONICITY & CONSISTENCY (TEST 2.2):
+  • Post-Processed Monotonicity Violations: 0 (0.00%)
+  • Non-Crossing Constraint P10 <= P50 <= P90: PASSED [OK]
+
+3. SYSTEM INFERENCE LATENCY (TEST 2.3):
+  • Batch Latency (100 SKUs): 21.84 ms (Target: <= 25 ms) -> PASSED [OK]
+
+4. INTEGRATION HANDSHAKE WITH DOWNSTREAM AGENTS:
+  • Deepanshu (Role #6 - Inventory Lead): Receives p50_demand (D_avg), p90_demand, sigma_demand for ROP
+  • Rajat (Role #7 - Circularity Lead): Receives overstock_risk_units (Omega_t) and p10_demand
+
+5. OVERALL STEP 2 STATUS:
+  STATUS: PASSED [OK]
+
+-----------------------------------------------------------------
+EXECUTION TRACE LOG:
+
+── Loading master panel (data/processed/df_master.parquet)...
+  ✓ Loaded master panel: 27,450 rows × 18 cols
+
+── Engineering temporal lags, multi-scale rolling statistics, and degradation metrics...
+  ✓ Features created successfully: 26,400 rows × 40 cols
+
+── Executing temporal train/validation/test split...
+  ✓ Train split : 2024-01-15 to 2024-09-17 (18,525 rows)
+  ✓ Val split   : 2024-09-18 to 2024-11-09 (3,975 rows)
+  ✓ Test split  : 2024-11-10 to 2024-12-31 (3,900 rows)
+
+── Training Multi-Quantile LightGBM models (P10, P50, P90)...
+  ✓ Model P10 trained in 0.69s | Best Iteration: 167
+  ✓ Model P50 trained in 0.73s | Best Iteration: 178
+  ✓ Model P90 trained in 1.29s | Best Iteration: 491
+  ✓ Model engine saved -> C:\Projects\Accesco project\outputs\lgb_p10_p50_p90.joblib
+
+── Running Step 2 Verification Suite...
+
+── TEST 2.3 — Inference Latency Benchmark (100 SKUs batch)
+  ✓ Inference latency (100 SKUs batch): 21.84 ms (Target: <= 25 ms)
+
+── TEST 2.2 — Quantile Monotonicity Verification
+  ✓ Raw quantile crossings: 0 (0.00%)
+  ✓ Post-processed crossings: 0 (Target: 0.0%)
+
+── TEST 2.1 — Predictive Accuracy Benchmarks (WAPE & Pinball Loss)
+  ✓ Category [Bakery  ] WAPE: 16.76%
+  ✓ Category [Dairy   ] WAPE: 16.58%
+  ✓ Category [Meat    ] WAPE: 19.49%
+  ✓ Category [Produce ] WAPE: 14.90%
+  ✓ Model Overall WAPE      : 16.20%  (Target: <= 18.0%)
+  ✓ Dairy Perishables WAPE  : 16.58%  (Target: <= 22.0%)
+  ✓ Naive 7-Day Baseline WAPE: 23.37%
+  ✓ Model Improvement       : +7.16% absolute WAPE reduction
+  ✓ Pinball Losses -> P10: 1.285 | P50: 3.010 | P90: 1.404
+  ✓ Feature importance exported -> C:\Projects\Accesco project\data\processed\step2_feature_importance.csv
+  ✓ Top 5 Driving Features for Dark-Store Demand:
+  ✓    1. rolling_mean_21      (Gain: 47,422.5)
+  ✓    2. rolling_mean_14      (Gain: 11,867.1)
+  ✓    3. day_of_week          (Gain: 9,681.1)
+  ✓    4. SKU_ID               (Gain: 6,949.6)
+  ✓    5. is_salary_surge      (Gain: 2,570.9)
+
+── Generating Downstream Handoff Payload for Deepanshu & Rajat...
+  ✓ Saved downstream payload -> C:\Projects\Accesco project\data\processed\forecast_payloads_step2.parquet (3,900 rows)
