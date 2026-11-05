@@ -87,14 +87,54 @@ class DataLoader:
         }
         
         # Validate that expected raw columns exist
-        missing = [c for c in ["Store_ID", "SKU_ID", "Category", "Date", "p10_demand", "p50_demand", "p90_demand", "sigma_demand"] if c not in df.columns]
+        required_cols = ["Store_ID", "SKU_ID", "Category", "Date", "p10_demand", "p50_demand", "p90_demand", "sigma_demand"]
+        missing = [c for c in required_cols if c not in df.columns]
         if missing:
             raise ValueError(f"Forecast file {fpath} is missing required columns: {missing}")
 
-        norm_df = df[list(rename_map.keys())].rename(columns=rename_map).copy()
+        available_cols = [c for c in rename_map.keys() if c in df.columns]
+        norm_df = df[available_cols].rename(columns=rename_map).copy()
+
+        # Ensure optional columns exist with None if omitted from source parquet
+        for opt_col in ["target_demand_eval_label", "total_shelf_life_days", "remaining_shelf_life_days"]:
+            if opt_col not in norm_df.columns:
+                norm_df[opt_col] = None
+
         norm_df["date"] = self._canonicalize_date(norm_df["raw_date"])
         norm_df = norm_df.drop(columns=["raw_date"])
-        
+
+        # Enforce strict forecast integrity: no nulls in required fields
+        required_norm = ["store_id", "sku_id", "category", "date", "p10_demand", "p50_demand", "p90_demand", "sigma_demand"]
+        nulls = norm_df[required_norm].isnull().sum()
+        if nulls.any():
+            bad = nulls[nulls > 0].to_dict()
+            raise ValueError(f"Integrity Error: Null values detected in forecast required fields: {bad}")
+
+        # Coerce numeric forecast columns to float and check for infs/non-numeric
+        numeric_cols = ["p10_demand", "p50_demand", "p90_demand", "sigma_demand"]
+        for col in numeric_cols:
+            norm_df[col] = pd.to_numeric(norm_df[col], errors="coerce")
+            if norm_df[col].isnull().any():
+                raise ValueError(f"Integrity Error: Non-numeric or NaN values detected in forecast column '{col}'.")
+            if norm_df[col].isin([float("inf"), float("-inf")]).any():
+                raise ValueError(f"Integrity Error: Infinite values detected in forecast column '{col}'.")
+
+        # Validate non-negative demand and positive uncertainty
+        for col in ["p10_demand", "p50_demand", "p90_demand"]:
+            if (norm_df[col] < 0.0).any():
+                raise ValueError(f"Integrity Error: Negative demand values detected in forecast column '{col}'.")
+        if (norm_df["sigma_demand"] <= 0.0).any():
+            raise ValueError("Integrity Error: Non-positive demand uncertainty detected in 'sigma_demand' (must be > 0).")
+
+        # Enforce quantile monotonicity: P10 <= P50 <= P90
+        p10_p50_viol = (norm_df["p10_demand"] > norm_df["p50_demand"]).sum()
+        p50_p90_viol = (norm_df["p50_demand"] > norm_df["p90_demand"]).sum()
+        if p10_p50_viol > 0 or p50_p90_viol > 0:
+            raise ValueError(
+                f"Integrity Error: Quantile monotonicity violation in forecast data: "
+                f"P10 > P50 count={p10_p50_viol}, P50 > P90 count={p50_p90_viol}."
+            )
+
         return norm_df
 
     def load_master_inventory(self, path: Optional[Path] = None) -> pd.DataFrame:
@@ -230,6 +270,13 @@ class DataLoader:
         if null_counts.any():
             bad_cols = null_counts[null_counts > 0].to_dict()
             raise ValueError(f"Integrity Error: Null values detected in mandatory fields: {bad_cols}")
+
+        # Check for infinite values in mandatory numeric fields
+        numeric_fields = ["p10_demand", "p50_demand", "p90_demand", "sigma_demand", "on_hand_stock"]
+        inf_counts = joined[numeric_fields].isin([float("inf"), float("-inf")]).sum()
+        if inf_counts.any():
+            bad_inf = inf_counts[inf_counts > 0].to_dict()
+            raise ValueError(f"Integrity Error: Infinite values detected in mandatory fields: {bad_inf}")
 
         report.validation_passed = True
         report.notes.append(

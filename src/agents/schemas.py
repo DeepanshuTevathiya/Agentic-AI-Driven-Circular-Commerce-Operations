@@ -10,7 +10,7 @@ Defines validated, immutable data schemas for:
 
 from datetime import date as dt_date, datetime as dt_datetime
 from enum import Enum
-from typing import Optional, Union
+from typing import List, Optional, Union
 from pydantic import (
     BaseModel,
     ConfigDict,
@@ -56,9 +56,9 @@ def _normalize_date_str(v: Union[str, dt_date, dt_datetime]) -> str:
 class DemandForecast(BaseModel):
     """
     Validated probabilistic macro demand forecast from Step 2.
-    Enforces quantile monotonicity (P10 <= P50 <= P90) and strictly positive uncertainty.
+    Enforces quantile monotonicity (P10 <= P50 <= P90), finite numbers, and strictly positive uncertainty.
     """
-    model_config = ConfigDict(frozen=True, extra="forbid")
+    model_config = ConfigDict(frozen=True, extra="forbid", allow_inf_nan=False)
 
     store_id: str = Field(..., description="Bangalore dark store identifier")
     sku_id: str = Field(..., description="Unique product SKU identifier")
@@ -101,7 +101,7 @@ class InventorySnapshot(BaseModel):
     - remaining_shelf_life_days and total_shelf_life_days are optional until timing
       semantics across inbound batches are fully audited.
     """
-    model_config = ConfigDict(frozen=True, extra="forbid")
+    model_config = ConfigDict(frozen=True, extra="forbid", allow_inf_nan=False)
 
     store_id: str = Field(..., description="Bangalore dark store identifier")
     sku_id: str = Field(..., description="Unique product SKU identifier")
@@ -154,7 +154,7 @@ class InventoryPosition(BaseModel):
     is encountered, it indicates an upstream data integrity problem that must be surfaced,
     not silently clamped.
     """
-    model_config = ConfigDict(frozen=True, extra="forbid")
+    model_config = ConfigDict(frozen=True, extra="forbid", allow_inf_nan=False)
 
     on_hand_stock: float = Field(..., ge=0.0, description="Physical beginning-of-day stock")
     reserved_stock: float = Field(default=0.0, ge=0.0, description="Inventory committed to confirmed customer orders")
@@ -196,7 +196,7 @@ class DailyAgentInput(BaseModel):
     3. This schema intentionally excludes ground-truth demand labels. Evaluation data
        lives in DailyEvaluationRecord to prevent accidental operational leakage.
     """
-    model_config = ConfigDict(frozen=True, extra="forbid")
+    model_config = ConfigDict(frozen=True, extra="forbid", allow_inf_nan=False)
 
     store_id: str = Field(..., description="Bangalore dark store identifier")
     sku_id: str = Field(..., description="Product SKU identifier")
@@ -246,7 +246,7 @@ class DailyEvaluationRecord(BaseModel):
     Kept strictly separate from operational inputs so agents cannot accidentally consume
     actual demand during decision-making.
     """
-    model_config = ConfigDict(frozen=True, extra="forbid")
+    model_config = ConfigDict(frozen=True, extra="forbid", allow_inf_nan=False)
 
     store_id: str = Field(..., description="Bangalore dark store identifier")
     sku_id: str = Field(..., description="Product SKU identifier")
@@ -262,3 +262,182 @@ class DailyEvaluationRecord(BaseModel):
     @classmethod
     def validate_date(cls, v: Union[str, dt_date]) -> str:
         return _normalize_date_str(v)
+
+
+class InventoryCalculationResult(BaseModel):
+    """
+    Deterministic output from the Core Inventory Engine for a single operational node.
+    Contains safety stock, reorder point, target stock, and suggested replenishment quantity.
+    """
+    model_config = ConfigDict(frozen=True, extra="forbid", allow_inf_nan=False)
+
+    store_id: str = Field(..., description="Bangalore dark store identifier")
+    sku_id: str = Field(..., description="Product SKU identifier")
+    date: str = Field(..., description="Operating calculation date (YYYY-MM-DD)")
+
+    average_daily_demand: float = Field(..., ge=0.0, description="D_avg from forecast P50")
+    demand_uncertainty_sigma: float = Field(..., ge=0.0, description="sigma_D from forecast")
+
+    lead_time_mean_days: float = Field(..., gt=0.0, description="Supplier lead time mean in days (LT_mean)")
+    lead_time_std_days: float = Field(..., ge=0.0, description="Supplier lead time std in days (sigma_LT)")
+    review_period_days: float = Field(..., ge=0.0, description="Review period in days (R)")
+    z_score: float = Field(..., ge=0.0, description="Service level Z-score factor")
+
+    safety_stock_lead_time: float = Field(
+        ...,
+        ge=0.0,
+        description="Lead-time safety stock SS_LT = Z * sqrt(LT_mean * sigma_D^2 + D_avg^2 * sigma_LT^2), used for ROP",
+    )
+    safety_stock_protection: float = Field(
+        ...,
+        ge=0.0,
+        description="Protection-period safety stock SS_P = Z * sqrt((LT_mean + R) * sigma_D^2 + D_avg^2 * sigma_LT^2), used for Target Stock",
+    )
+    safety_stock: float = Field(
+        ...,
+        ge=0.0,
+        description="Lead-time safety stock (alias to safety_stock_lead_time for backward compatibility)",
+    )
+    reorder_point: float = Field(..., ge=0.0, description="Reorder point ROP = (D_avg * LT_mean) + SS_LT")
+    target_stock: float = Field(..., ge=0.0, description="Target stock S = D_avg * (R + LT_mean) + SS_P")
+
+    inventory_position: InventoryPosition = Field(..., description="Inventory position (on_hand, reserved, on_order)")
+    reorder_triggered: bool = Field(..., description="True if total_inventory_position <= ROP")
+    suggested_replenishment_qty: float = Field(
+        ...,
+        ge=0.0,
+        description="Suggested unconstrained order qty: max(0, S - IP) if reorder_triggered else 0.0"
+    )
+    assumed_zero_pipeline: bool = Field(
+        default=False,
+        description="Explicit simulation assumption flag: True if on_order and reserved were defaulted to 0.0"
+    )
+
+    @field_validator("store_id", "sku_id")
+    @classmethod
+    def validate_identifiers(cls, v: str, info) -> str:
+        return _validate_non_empty_str(v, info.field_name)
+
+    @field_validator("date")
+    @classmethod
+    def validate_date(cls, v: Union[str, dt_date]) -> str:
+        return _normalize_date_str(v)
+
+    @property
+    def total_inventory_position(self) -> float:
+        return self.inventory_position.total_inventory_position
+
+    @property
+    def net_available_stock(self) -> float:
+        return self.inventory_position.net_available_stock
+
+
+class StockRiskLevel(str, Enum):
+    """Operational inventory stock risk classification."""
+    CRITICAL_LOW = "CRITICAL_LOW"            # At or below safety stock or physical stockout
+    LOW_STOCK_REORDER = "LOW_STOCK_REORDER"  # At or below ROP; replenishment triggered
+    HEALTHY = "HEALTHY"                      # Optimal operating band (ROP < IP <= Target Stock)
+    EXCESS_STOCK = "EXCESS_STOCK"            # Above Target Stock; holding excess inventory
+
+
+class ExpiryRiskLevel(str, Enum):
+    """
+    Perishable inventory expiration risk classification based on an estimated
+    clearance scenario under repeated daily P50 demand (not an exact expiry prediction).
+    """
+    NOT_ASSESSABLE = "NOT_ASSESSABLE"        # Discrete batch data absent, inconsistent, or unverified
+    LOW = "LOW"                              # Batches present and estimated to clear before expiry
+    MEDIUM = "MEDIUM"                        # Batches present with units estimated to expire beyond lead time
+    HIGH = "HIGH"                            # Batches present with units estimated to expire within lead time window
+
+
+class InventoryBatch(BaseModel):
+    """
+    Physical perishable inventory batch with discrete expiration tracking.
+    Used for reliable batch-level perishability and expiry risk evaluation.
+    """
+    model_config = ConfigDict(frozen=True, extra="forbid", allow_inf_nan=False)
+
+    batch_id: str = Field(..., description="Unique batch/lot identifier")
+    units: float = Field(..., gt=0.0, description="Available batch physical quantity")
+    remaining_shelf_life_days: int = Field(..., ge=0, description="Remaining shelf life days until expiration")
+    creation_date: Optional[str] = Field(default=None, description="Batch manufacture or intake date (YYYY-MM-DD)")
+
+    @field_validator("batch_id")
+    @classmethod
+    def validate_batch_id(cls, v: str) -> str:
+        return _validate_non_empty_str(v, "batch_id")
+
+
+class InventoryRiskAssessment(BaseModel):
+    """
+    Comprehensive risk assessment output combining stock-level and perishable expiry risks.
+    Evaluates deterministic stress scenarios (P10 downside clearance, P90 demand surge;
+    not calibrated multi-day predictions) alongside deterministic inventory metrics.
+    Perishable expiry uses an estimated clearance scenario under repeated daily P50 demand
+    (not an exact expiry prediction).
+    """
+    model_config = ConfigDict(frozen=True, extra="forbid", allow_inf_nan=False)
+
+    store_id: str = Field(..., description="Bangalore dark store identifier")
+    sku_id: str = Field(..., description="Product SKU identifier")
+    date: str = Field(..., description="Operating calculation date (YYYY-MM-DD)")
+
+    stock_risk_level: StockRiskLevel = Field(..., description="Stock level operational status")
+    reorder_recommended: bool = Field(..., description="Whether a replenishment order is recommended")
+    stockout_risk_reasons: List[str] = Field(default_factory=list, description="Detailed explanatory reasons for stockout/low-stock risks")
+    excess_risk_reasons: List[str] = Field(default_factory=list, description="Detailed explanatory reasons for excess stock risks")
+
+    excess_quantity: float = Field(default=0.0, ge=0.0, description="Quantity exceeding Target Stock (max(0, IP - S))")
+    excess_quantity_p10: float = Field(
+        default=0.0,
+        ge=0.0,
+        description=(
+            "Quantity exceeding Target Stock under deterministic downside (P10) demand stress scenario "
+            "(deterministic stress scenario, not a calibrated multi-day prediction)"
+        ),
+    )
+    surge_coverage_ratio_p90: Optional[float] = Field(
+        default=None,
+        ge=0.0,
+        description=(
+            "Ratio of IP to deterministic P90 peak demand stress scenario over lead time: IP / (P90 * LT_mean) "
+            "(deterministic stress scenario, not a calibrated multi-day prediction; None if P90 <= 0)"
+        ),
+    )
+    days_of_supply_p50: Optional[float] = Field(
+        default=None,
+        ge=0.0,
+        description="Estimated days of supply under repeated median P50 demand velocity: IP / P50",
+    )
+
+    expiry_risk_level: ExpiryRiskLevel = Field(
+        default=ExpiryRiskLevel.NOT_ASSESSABLE,
+        description=(
+            "Perishable expiry risk level under estimated clearance scenario. "
+            "Explicitly NOT_ASSESSABLE if batch data is unavailable or inconsistent."
+        ),
+    )
+    at_risk_expiry_units: Optional[float] = Field(
+        default=None,
+        ge=0.0,
+        description=(
+            "Estimated units at risk of expiring under repeated P50 demand clearance scenario "
+            "(estimated clearance scenario, not an exact expiry prediction; None when NOT_ASSESSABLE)"
+        ),
+    )
+    expiry_risk_reasons: List[str] = Field(default_factory=list, description="Detailed explanatory reasons for expiry risks")
+
+    assumed_zero_pipeline: bool = Field(..., description="Propagated flag indicating whether on_order/reserved were defaulted to 0.0")
+
+    @field_validator("store_id", "sku_id")
+    @classmethod
+    def validate_identifiers(cls, v: str, info) -> str:
+        return _validate_non_empty_str(v, info.field_name)
+
+    @field_validator("date")
+    @classmethod
+    def validate_date(cls, v: Union[str, dt_date]) -> str:
+        return _normalize_date_str(v)
+
+
