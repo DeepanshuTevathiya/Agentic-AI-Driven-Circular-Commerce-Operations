@@ -16,7 +16,7 @@ Validates:
    - Detection and rejection of quantile inversions in parquet
    - Detection of duplicate store-SKU-date combinations
 3. End-to-end integration flow with Lead 1's Step 2 forecast payload:
-   - Consumption of all 3,900 records from forecast_payloads_step2.parquet
+   - Consumption of all 3,900 records from forecast_payloads_step2_corrected.parquet
    - Correct association of store_id, sku_id, date, and category
    - Beginning-of-day stock sourced from df_master Opening_Stock (not same-day Closing_Stock)
    - Strict isolation of Target_Demand in DailyEvaluationRecord
@@ -302,7 +302,7 @@ class TestForecastDataLoaderValidation(unittest.TestCase):
 
 
 class TestLightGBMIntegrationFlow(unittest.TestCase):
-    """End-to-end validation against Lead 1's actual forecast_payloads_step2.parquet."""
+    """End-to-end validation against Lead 1's actual forecast_payloads_step2_corrected.parquet."""
 
     @classmethod
     def setUpClass(cls):
@@ -311,7 +311,7 @@ class TestLightGBMIntegrationFlow(unittest.TestCase):
         cls.inputs, cls.eval_records, cls.report = cls.loader.load_daily_agent_inputs()
 
     def test_full_dataset_record_count(self):
-        """All 3,900 rows of forecast_payloads_step2.parquet must be parsed."""
+        """All 3,900 rows of forecast_payloads_step2_corrected.parquet must be parsed."""
         self.assertEqual(len(self.inputs), 3900)
         self.assertEqual(len(self.eval_records), 3900)
         self.assertEqual(self.report.forecast_rows_loaded, 3900)

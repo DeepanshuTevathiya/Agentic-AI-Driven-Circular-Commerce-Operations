@@ -176,7 +176,7 @@ class TestDataLoaderIntegration(unittest.TestCase):
         self.loader = DataLoader(self.config)
 
     def test_full_repository_data_load(self):
-        """Validates ingestion across all 3,900 rows of forecast_payloads_step2.parquet."""
+        """Validates ingestion across all 3,900 rows of forecast_payloads_step2_corrected.parquet."""
         joined, report = self.loader.load_harmonized_dataframe()
 
         self.assertEqual(len(joined), 3900)

@@ -108,7 +108,7 @@ class Lead2Config:
     Master configuration object for Lead 2 agents and data loaders.
     """
     # File paths
-    forecast_file: Path = PROCESSED_DATA_DIR / "forecast_payloads_step2.parquet"
+    forecast_file: Path = PROCESSED_DATA_DIR / "forecast_payloads_step2_corrected.parquet"
     master_file: Path = PROCESSED_DATA_DIR / "df_master.parquet"
     preorders_file: Path = PROCESSED_DATA_DIR / "committed_preorders_step3.parquet"
     

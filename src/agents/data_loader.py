@@ -2,13 +2,13 @@
 Lead 2 Data Loader & Ingestion Pipeline
 =======================================
 Implements robust, audited data ingestion for Lead 2 agents by joining:
-1. forecast_payloads_step2.parquet (probabilistic forecasts)
+1. forecast_payloads_step2_corrected.parquet (probabilistic forecasts)
 2. df_master.parquet (authoritative beginning-of-day Opening_Stock)
 3. committed_preorders_step3.parquet (diagnostic customer runout alerts)
 
 CRITICAL INGESTION POLICIES:
 - Uses Opening_Stock from df_master as beginning-of-day on_hand_stock.
-- Same-day Closing_Stock from forecast_payloads_step2 is strictly rejected as starting inventory.
+- Same-day Closing_Stock from forecast payload is strictly rejected as starting inventory.
 - Target_Demand is preserved solely as an offline evaluation label (never as an operational input).
 - Step 3 alert counts are labeled 'unconfirmed_alert_count' and kept strictly diagnostic
   (they are NOT treated as confirmed orders, NOT reserved, and NOT subtracted/added from P50).
@@ -62,7 +62,7 @@ class DataLoader:
 
     def load_forecasts(self, path: Optional[Path] = None) -> pd.DataFrame:
         """
-        Loads and normalizes forecast_payloads_step2.parquet.
+        Loads and normalizes forecast payload parquet (default: forecast_payloads_step2_corrected.parquet).
         Extracts probabilistic demand quantiles and uncertainty metrics.
         """
         fpath = path or self.config.forecast_file

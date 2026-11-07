@@ -1,0 +1,91 @@
+===========================================================================
+STEP 2 (CORRECTED) — MACRO DEMAND FORECASTING ENGINE TEST REPORT
+Feature Alignment: Scenario A (D-1 Finalized Orders, Zero Leakage)
+===========================================================================
+
+1. PREDICTIVE ACCURACY BENCHMARKS:
+  * Overall WAPE             : 16.16%
+  * Mean Absolute Error (MAE): 6.0 units
+  * Root Mean Sq. Error(RMSE): 7.72 units
+  * P10-P90 Coverage         : 76.64%
+  * Naive 7-Day Baseline WAPE: 23.37%
+  * Accuracy Gain vs Baseline: +7.21% absolute WAPE reduction
+  * Quantile Pinball Losses  : P10=1.286 | P50=3.001 | P90=1.398
+
+2. CATEGORY BREAKDOWN:
+  * Bakery      : 16.73%
+  * Dairy       : 16.51%
+  * Meat        : 19.4%
+  * Produce     : 14.88%
+
+3. MONOTONICITY & LATENCY:
+  * Raw Crossing Count       : 0
+  * Enforced Violations      : 0 (0.00%)
+  * Batch Latency (100 SKUs) : 28.78 ms
+
+4. EXECUTION TRACE LOG:
+
+===========================================================================
+[STAGE 01 | 2026-11-06 18:18:20] Loading Master Panel (data/processed/df_master.parquet)
+===========================================================================
+  [+]  Loaded master panel from: df_master.parquet
+      *  Dataset shape: 27,450 rows x 18 columns
+      *  Temporal span: 2024-01-01 to 2024-12-31 (366 unique dates)
+      *  Entities: 15 SKUs across 5 Dark-Stores in 4 Categories
+
+===========================================================================
+[STAGE 02 | 2026-11-06 18:18:20] Engineering Features with Corrected Category_Daily_Orders Alignment
+===========================================================================
+  [+]  Executing feature engineering pipeline...
+  [+]  Successfully shifted Category_Daily_Orders to D-1 (Scenario A).
+      *  Unshifted Day 1 records with no prior day (NaN): 75 rows (expected: 75)
+  [+]  Warm-up filter (demand_lag_14): dropped 1,050 initial burn-in rows.
+  [+]  Post-warmup feature panel: 26,400 rows x 40 columns
+      *  Post-warmup Category_Daily_Orders NaNs: 0 (verified complete)
+
+===========================================================================
+[STAGE 03 | 2026-11-06 18:18:21] Auditing Feature Safety & Verifying Strict D-1 Alignment
+===========================================================================
+  [+]  Executing feature safety and leakage audit across all 26 model features...
+  [+]  All 26 features successfully verified leak-free under Scenario A.
+
+===========================================================================
+[STAGE 04 | 2026-11-06 18:18:21] Executing Strict Chronological Train / Val / Test Partitioning
+===========================================================================
+  [+]  Train split : 2024-01-15 to 2024-09-17 (18,525 rows | 247 days)
+  [+]  Val split   : 2024-09-18 to 2024-11-09 (3,975 rows | 53 days)
+  [+]  Test split  : 2024-11-10 to 2024-12-31 (3,900 rows | 52 days)
+
+===========================================================================
+[STAGE 05 | 2026-11-06 18:18:21] Training Fresh Multi-Quantile LightGBM Models (P10, P50, P90)
+===========================================================================
+  [+]  Training Matrix : 18,525 samples x 26 features
+  [+]  Validation Matrix: 3,975 samples x 26 features
+   --- Launching Training for Quantile P10 (alpha=0.10) ---
+  [+]  Quantile P10 complete in 0.84s | Best Iteration: 162
+   --- Launching Training for Quantile P50 (alpha=0.50) ---
+  [+]  Quantile P50 complete in 0.96s | Best Iteration: 168
+   --- Launching Training for Quantile P90 (alpha=0.90) ---
+  [+]  Quantile P90 complete in 1.97s | Best Iteration: 423
+
+===========================================================================
+[STAGE 06 | 2026-11-06 18:18:25] Persisting Retrained Model Artifacts
+===========================================================================
+  [+]  Saved corrected model artifact -> E:\Demand_Consumption_Pipeline\outputs\lgb_p10_p50_p90_corrected.joblib
+
+===========================================================================
+[STAGE 07 | 2026-11-06 18:18:25] Running Out-of-Sample Test Evaluation Suite
+===========================================================================
+  [+]  Evaluating predictive accuracy benchmarks on out-of-sample Test split...
+
+===========================================================================
+[STAGE 08 | 2026-11-06 18:18:25] Generating Downstream Payload and Reports
+===========================================================================
+  [+]  Saved downstream payload -> forecast_payloads_step2_corrected.parquet (3,900 rows)
+  [+]  Feature importance exported -> step2_feature_importance_corrected.csv
+  [+]  Top 5 Driving Features for Corrected Model:
+      *    1. rolling_mean_21        (Gain: 46,909.9)
+      *    2. rolling_mean_14        (Gain: 12,272.0)
+      *    3. day_of_week            (Gain: 9,660.2)
+      *    4. SKU_ID                 (Gain: 6,849.2)
+      *    5. rolling_mean_7         (Gain: 2,595.2)

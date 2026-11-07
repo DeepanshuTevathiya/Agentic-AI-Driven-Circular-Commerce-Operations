@@ -1,0 +1,21 @@
+{
+  "timestamp": "2026-11-06T18:18:25.675208",
+  "overall_wape": 16.16,
+  "mae": 6.0,
+  "rmse": 7.72,
+  "coverage_p10_p90_pct": 76.64,
+  "category_wape": {
+    "Bakery": 16.73,
+    "Dairy": 16.51,
+    "Meat": 19.4,
+    "Produce": 14.88
+  },
+  "naive_wape": 23.37,
+  "wape_improvement": 7.21,
+  "pinball_p10": 1.286,
+  "pinball_p50": 3.001,
+  "pinball_p90": 1.398,
+  "latency_ms": 28.78,
+  "model_artifact": "E:\\Demand_Consumption_Pipeline\\outputs\\lgb_p10_p50_p90_corrected.joblib",
+  "payload_artifact": "E:\\Demand_Consumption_Pipeline\\data\\processed\\forecast_payloads_step2_corrected.parquet"
+}
