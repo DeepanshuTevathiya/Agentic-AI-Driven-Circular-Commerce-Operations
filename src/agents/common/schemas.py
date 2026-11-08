@@ -1,11 +1,14 @@
 """
-Lead 2 Data Contracts & Pydantic V2 Schemas
-============================================
+Lead 2 Data Contracts & Pydantic V2 Schemas (Common)
+====================================================
 Defines validated, immutable data schemas for:
 - DemandForecast (probabilistic multi-quantile demand inputs)
 - InventorySnapshot (beginning-of-day physical stock and optional shelf life)
 - InventoryPosition (on-hand, reserved, and on-order stock)
 - DailyAgentInput (unified validated daily contract per store-SKU-date)
+- DailyEvaluationRecord (offline ground-truth demand label)
+- InventoryCalculationResult (core inventory engine output metrics)
+- InventoryRiskAssessment (stock level and perishable expiry risk evaluations)
 """
 
 from datetime import date as dt_date, datetime as dt_datetime
@@ -439,5 +442,4 @@ class InventoryRiskAssessment(BaseModel):
     @classmethod
     def validate_date(cls, v: Union[str, dt_date]) -> str:
         return _normalize_date_str(v)
-
 

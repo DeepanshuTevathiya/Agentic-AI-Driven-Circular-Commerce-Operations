@@ -29,9 +29,9 @@ Validates:
 import unittest
 from typing import List
 
-from src.agents.config import get_default_config
-from src.agents.data_loader import DataLoader
-from src.agents.inventory_engine import (
+from src.agents.common.config import get_default_config
+from src.agents.common.data_loader import DataLoader
+from src.agents.inventory.engine import (
     InventoryEngine,
     assess_expiry_risk,
     assess_inventory_risk,
@@ -39,7 +39,7 @@ from src.agents.inventory_engine import (
     compute_surge_coverage_ratio_p90,
     validate_batch_inventory,
 )
-from src.agents.schemas import (
+from src.agents.common.schemas import (
     DailyAgentInput,
     DemandForecast,
     ExpiryRiskLevel,

@@ -29,9 +29,9 @@ import pandas as pd
 import numpy as np
 from pydantic import ValidationError
 
-from src.agents.config import get_default_config
-from src.agents.data_loader import DataLoader
-from src.agents.schemas import (
+from src.agents.common.config import get_default_config
+from src.agents.common.data_loader import DataLoader
+from src.agents.common.schemas import (
     DemandForecast,
     DailyAgentInput,
     DailyEvaluationRecord,

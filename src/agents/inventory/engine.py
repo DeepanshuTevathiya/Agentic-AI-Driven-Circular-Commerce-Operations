@@ -28,10 +28,10 @@ OPERATIONAL SAFETY & DATA INTEGRITY CONSTRAINTS:
 """
 
 import math
-from typing import Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Tuple, Union
 
-from .config import Lead2Config, SupplierSimulationParams, get_default_config
-from .schemas import (
+from ..common.config import Lead2Config, SKU_TO_CATEGORY, SupplierSimulationParams, get_default_config
+from ..common.schemas import (
     DailyAgentInput,
     DemandForecast,
     ExpiryRiskLevel,
@@ -624,11 +624,45 @@ class InventoryEngine:
     def __init__(self, config: Optional[Lead2Config] = None):
         self.config = config or get_default_config()
 
-    def get_supplier_params(self, category: str) -> SupplierSimulationParams:
-        """Resolves simulation parameters for a given product category."""
-        return self.config.category_supplier_params.get(
+    def get_supplier_params(
+        self,
+        category: str,
+        supplier_type: Optional[Any] = None,
+    ) -> SupplierSimulationParams:
+        """
+        Resolves simulation parameters for a given product category and supplier tier.
+
+        Args:
+            category: Product category (Bakery, Dairy, Meat, Produce).
+            supplier_type: Optional SupplierType or string ('PRIMARY' or 'BACKUP'). Defaults to PRIMARY.
+
+        Returns:
+            SupplierSimulationParams with category and supplier specific lead time mean and standard deviation.
+        """
+        is_backup = False
+        if supplier_type is not None:
+            val = supplier_type.value if hasattr(supplier_type, "value") else str(supplier_type)
+            is_backup = (val.upper() == "BACKUP")
+
+        primary_params = self.config.category_supplier_params.get(
             category, self.config.default_supplier_params
         )
+
+        if is_backup:
+            proc_params = self.config.category_procurement_params.get(category)
+            if proc_params is not None:
+                return SupplierSimulationParams(
+                    lead_time_mean_days=proc_params.backup_lead_time_days,       # 0.8 days
+                    lead_time_std_days=proc_params.backup_lead_time_std_days,    # 0.15 days
+                    review_period_days=primary_params.review_period_days,         # 1.0 day
+                    min_order_qty=proc_params.min_order_qty,
+                    cogs_price_ratio=proc_params.backup_cogs_ratio,              # 0.75
+                    holding_cost_per_unit_day=primary_params.holding_cost_per_unit_day,
+                    stockout_penalty_per_unit=primary_params.stockout_penalty_per_unit,
+                    disposal_cost_per_unit=primary_params.disposal_cost_per_unit,
+                )
+
+        return primary_params
 
     def calculate(
         self,
@@ -637,7 +671,8 @@ class InventoryEngine:
         on_order_stock: Optional[float] = None,
         reserved_stock: Optional[float] = None,
         z_score: Optional[float] = None,
-        supplier_params: Optional[SupplierSimulationParams] = None,
+        supplier_params: Optional[Any] = None,
+        supplier_type: Optional[Any] = None,
     ) -> InventoryCalculationResult:
         """
         Executes deterministic inventory policy calculations for a single operational node.
@@ -651,7 +686,8 @@ class InventoryEngine:
             on_order_stock: Optional explicit incoming purchase order stock quantity.
             reserved_stock: Optional explicit confirmed customer order reservation quantity.
             z_score: Optional custom service level Z-score. Defaults to config.default_z_score (1.645).
-            supplier_params: Optional custom supplier parameters. Defaults to category config.
+            supplier_params: Optional custom supplier parameters (SupplierSimulationParams or SupplierProfile).
+            supplier_type: Optional supplier tier (SupplierType or 'PRIMARY'/'BACKUP'). Defaults to PRIMARY.
 
         Returns:
             Validated InventoryCalculationResult.
@@ -689,16 +725,27 @@ class InventoryEngine:
             )
             assumed_zero_pipeline = not (has_on_order and has_reserved)
 
-        # 2. Resolve parameters
-        params = supplier_params or self.get_supplier_params(daily_input.category)
+        # 2. Resolve parameters (supports SupplierSimulationParams, SupplierProfile, and SupplierType)
+        if supplier_params is not None:
+            if hasattr(supplier_params, "lead_time_mean_days") and hasattr(supplier_params, "lead_time_std_days"):
+                lt_mean = float(supplier_params.lead_time_mean_days)
+                sigma_lt = float(supplier_params.lead_time_std_days)
+                review_period = float(
+                    getattr(supplier_params, "review_period_days", self.config.default_supplier_params.review_period_days)
+                )
+            else:
+                raise TypeError(f"Unsupported supplier_params type: {type(supplier_params)}")
+        else:
+            params = self.get_supplier_params(daily_input.category, supplier_type=supplier_type)
+            lt_mean = float(params.lead_time_mean_days)
+            sigma_lt = float(params.lead_time_std_days)
+            review_period = float(params.review_period_days)
+
         z = z_score if z_score is not None else self.config.default_z_score
 
         # 3. Compute demand and lead-time terms
         d_avg = compute_average_daily_demand(daily_input.forecast)
         sigma_d = float(daily_input.forecast.sigma_demand)
-        lt_mean = float(params.lead_time_mean_days)
-        sigma_lt = float(params.lead_time_std_days)
-        review_period = float(params.review_period_days)
 
         # 4. Core inventory equations
         # SS_LT: Lead-time safety stock covering transit uncertainty (used for ROP)
@@ -759,6 +806,139 @@ class InventoryEngine:
             reorder_triggered=reorder_triggered,
             suggested_replenishment_qty=suggested_qty,
             assumed_zero_pipeline=assumed_zero_pipeline,
+        )
+
+    def calculate_for_supplier(
+        self,
+        daily_input: DailyAgentInput,
+        supplier: Any,
+        inventory_position: Optional[InventoryPosition] = None,
+        on_order_stock: Optional[float] = None,
+        reserved_stock: Optional[float] = None,
+        z_score: Optional[float] = None,
+    ) -> InventoryCalculationResult:
+        """
+        Calculates inventory requirements specifically tailored to a designated supplier profile or tier.
+
+        Args:
+            daily_input: Operational DailyAgentInput.
+            supplier: SupplierProfile, SupplierSimulationParams, SupplierType, or string ('PRIMARY', 'BACKUP').
+            inventory_position: Optional inventory position override.
+            on_order_stock: Optional on-order quantity.
+            reserved_stock: Optional reserved quantity.
+            z_score: Optional service level Z-score.
+
+        Returns:
+            InventoryCalculationResult tailored to the specified supplier's lead time and variability.
+        """
+        if isinstance(supplier, str) or hasattr(supplier, "value"):
+            return self.calculate(
+                daily_input=daily_input,
+                inventory_position=inventory_position,
+                on_order_stock=on_order_stock,
+                reserved_stock=reserved_stock,
+                z_score=z_score,
+                supplier_type=supplier,
+            )
+        else:
+            return self.calculate(
+                daily_input=daily_input,
+                inventory_position=inventory_position,
+                on_order_stock=on_order_stock,
+                reserved_stock=reserved_stock,
+                z_score=z_score,
+                supplier_params=supplier,
+            )
+
+    def recalculate_for_supplier(
+        self,
+        calc_result: InventoryCalculationResult,
+        supplier: Any,
+        category: Optional[str] = None,
+        z_score: Optional[float] = None,
+    ) -> InventoryCalculationResult:
+        """
+        Re-evaluates an existing InventoryCalculationResult using a specified supplier's
+        lead time mean and standard deviation. Preserves demand forecast and inventory position.
+
+        Args:
+            calc_result: Output from a prior InventoryEngine calculation.
+            supplier: SupplierProfile, SupplierSimulationParams, SupplierType, or string ('PRIMARY', 'BACKUP').
+            category: Optional category override (defaults to SKU_TO_CATEGORY lookup).
+            z_score: Optional service level Z-score override.
+
+        Returns:
+            New InventoryCalculationResult with recalculated supplier-specific metrics.
+        """
+        if hasattr(supplier, "lead_time_mean_days") and hasattr(supplier, "lead_time_std_days"):
+            lt_mean = float(supplier.lead_time_mean_days)
+            sigma_lt = float(supplier.lead_time_std_days)
+            review_period = float(
+                getattr(supplier, "review_period_days", calc_result.review_period_days)
+            )
+        else:
+            cat = category or SKU_TO_CATEGORY.get(calc_result.sku_id, "Produce")
+            params = self.get_supplier_params(cat, supplier_type=supplier)
+            lt_mean = float(params.lead_time_mean_days)
+            sigma_lt = float(params.lead_time_std_days)
+            review_period = float(params.review_period_days)
+
+        d_avg = calc_result.average_daily_demand
+        sigma_d = calc_result.demand_uncertainty_sigma
+        z = z_score if z_score is not None else calc_result.z_score
+        pos = calc_result.inventory_position
+
+        ss_lt = compute_safety_stock(
+            d_avg=d_avg,
+            sigma_d=sigma_d,
+            lt_mean=lt_mean,
+            sigma_lt=sigma_lt,
+            z=z,
+        )
+        ss_protection = compute_protection_safety_stock(
+            d_avg=d_avg,
+            sigma_d=sigma_d,
+            lt_mean=lt_mean,
+            review_period=review_period,
+            sigma_lt=sigma_lt,
+            z=z,
+        )
+        rop = compute_reorder_point(
+            d_avg=d_avg,
+            lt_mean=lt_mean,
+            safety_stock=ss_lt,
+        )
+        target_stock = compute_target_stock(
+            d_avg=d_avg,
+            lt_mean=lt_mean,
+            review_period=review_period,
+            safety_stock=ss_protection,
+        )
+        reorder_triggered, suggested_qty = compute_suggested_replenishment_qty(
+            total_inventory_position=pos.total_inventory_position,
+            rop=rop,
+            target_stock=target_stock,
+        )
+
+        return InventoryCalculationResult(
+            store_id=calc_result.store_id,
+            sku_id=calc_result.sku_id,
+            date=calc_result.date,
+            average_daily_demand=d_avg,
+            demand_uncertainty_sigma=sigma_d,
+            lead_time_mean_days=lt_mean,
+            lead_time_std_days=sigma_lt,
+            review_period_days=review_period,
+            z_score=z,
+            safety_stock_lead_time=ss_lt,
+            safety_stock_protection=ss_protection,
+            safety_stock=ss_lt,
+            reorder_point=rop,
+            target_stock=target_stock,
+            inventory_position=pos,
+            reorder_triggered=reorder_triggered,
+            suggested_replenishment_qty=suggested_qty,
+            assumed_zero_pipeline=calc_result.assumed_zero_pipeline,
         )
 
     def calculate_batch(

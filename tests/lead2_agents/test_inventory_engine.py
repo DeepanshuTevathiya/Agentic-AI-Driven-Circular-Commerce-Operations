@@ -33,9 +33,9 @@ import unittest
 import numpy as np
 from pydantic import ValidationError
 
-from src.agents.config import Lead2Config, SupplierSimulationParams, get_default_config
-from src.agents.data_loader import DataLoader
-from src.agents.inventory_engine import (
+from src.agents.common.config import Lead2Config, SupplierSimulationParams, get_default_config
+from src.agents.common.data_loader import DataLoader
+from src.agents.inventory.engine import (
     InventoryEngine,
     compute_average_daily_demand,
     compute_protection_safety_stock,
@@ -44,7 +44,7 @@ from src.agents.inventory_engine import (
     compute_suggested_replenishment_qty,
     compute_target_stock,
 )
-from src.agents.schemas import (
+from src.agents.common.schemas import (
     DailyAgentInput,
     DemandForecast,
     InventoryCalculationResult,
@@ -469,6 +469,149 @@ class TestInventoryEngineIntegration(unittest.TestCase):
             self.assertGreater(res.reorder_point, res.safety_stock_lead_time)
             self.assertGreater(res.target_stock, res.reorder_point)
             self.assertGreaterEqual(res.suggested_replenishment_qty, 0.0)
+
+
+class TestSupplierSpecificLeadTimeVariability(unittest.TestCase):
+    """
+    Validates supplier-specific lead time and variability influence on inventory planning.
+    Ensures backup supplier (0.8d mean, 0.15d std) actively affects safety stock, ROP,
+    and target stock while primary supplier behavior remains unchanged.
+    """
+
+    def setUp(self):
+        self.config = get_default_config()
+        self.engine = InventoryEngine(self.config)
+
+        # Canonical DailyAgentInput on Dairy (Primary LT = 1.5d, 0.3d std; Backup LT = 0.8d, 0.15d std)
+        self.daily_input = DailyAgentInput(
+            store_id="DS_BLR_KORAMANGALA",
+            sku_id="SKU_MILK_1L",
+            category="Dairy",
+            date="2024-11-15",
+            forecast=DemandForecast(
+                store_id="DS_BLR_KORAMANGALA",
+                sku_id="SKU_MILK_1L",
+                category="Dairy",
+                date="2024-11-15",
+                p10_demand=30.0,
+                p50_demand=40.0,
+                p90_demand=50.0,
+                sigma_demand=8.0,
+            ),
+            inventory=InventorySnapshot(
+                store_id="DS_BLR_KORAMANGALA",
+                sku_id="SKU_MILK_1L",
+                date="2024-11-15",
+                on_hand_stock=20.0,
+                snapshot_basis=InventorySnapshotBasis.BEGINNING_OF_DAY,
+            ),
+        )
+
+    def test_primary_supplier_calculations_remain_unchanged(self):
+        """Default calculate() must use primary supplier parameters (Dairy: 1.5d mean, 0.3d std)."""
+        res_default = self.engine.calculate(self.daily_input)
+        self.assertEqual(res_default.lead_time_mean_days, 1.5)
+        self.assertEqual(res_default.lead_time_std_days, 0.3)
+
+        # Expected values matching analytical derivation in TestInventoryMathFunctions:
+        # SS_LT = 1.645 * sqrt(1.5 * 64 + 1600 * 0.09) = 1.645 * sqrt(240) = 25.484230
+        # ROP = 40 * 1.5 + 25.484230 = 85.484230
+        # SS_P = 1.645 * sqrt(2.5 * 64 + 1600 * 0.09) = 1.645 * sqrt(304) = 28.681555
+        # Target Stock = 40 * 2.5 + 28.681555 = 128.681555
+        self.assertAlmostEqual(res_default.safety_stock_lead_time, 25.484230, places=5)
+        self.assertAlmostEqual(res_default.safety_stock_protection, 28.681555, places=5)
+        self.assertAlmostEqual(res_default.reorder_point, 85.484230, places=5)
+        self.assertAlmostEqual(res_default.target_stock, 128.681555, places=5)
+
+    def test_backup_supplier_lead_time_and_variability_affects_calculations(self):
+        """
+        Backup supplier (0.8d mean, 0.15d std) must produce analytically verified
+        inventory parameters reflecting shorter lead time and lower variability.
+        """
+        # Analytical derivation:
+        # D_avg = 40.0, sigma_D = 8.0, Z = 1.645, R = 1.0
+        # LT_mean = 0.8, sigma_LT = 0.15
+        # 1. Lead-time SS:
+        # var_demand = 0.8 * (8.0^2) = 0.8 * 64.0 = 51.2
+        # var_lt = (40.0^2) * (0.15^2) = 1600.0 * 0.0225 = 36.0
+        # total_var = 51.2 + 36.0 = 87.2
+        # SS_LT = 1.645 * sqrt(87.2) = 1.645 * 9.338093916853272 = 15.3611645
+        # ROP = (40.0 * 0.8) + 15.3611645 = 32.0 + 15.3611645 = 47.3611645
+        #
+        # 2. Protection-period SS:
+        # exposure_horizon = 0.8 + 1.0 = 1.8
+        # var_demand_p = 1.8 * 64.0 = 115.2
+        # total_var_p = 115.2 + 36.0 = 151.2
+        # SS_P = 1.645 * sqrt(151.2) = 1.645 * 12.296340919151547 = 20.2274808
+        # Target Stock S = 40.0 * 1.8 + 20.2274808 = 72.0 + 20.2274808 = 92.2274808
+        res_backup = self.engine.calculate(self.daily_input, supplier_type="BACKUP")
+
+        self.assertEqual(res_backup.lead_time_mean_days, 0.8)
+        self.assertEqual(res_backup.lead_time_std_days, 0.15)
+        self.assertAlmostEqual(res_backup.safety_stock_lead_time, 15.3611645, places=5)
+        self.assertAlmostEqual(res_backup.safety_stock_protection, 20.2274808, places=5)
+        self.assertAlmostEqual(res_backup.reorder_point, 47.3611645, places=5)
+        self.assertAlmostEqual(res_backup.target_stock, 92.2274808, places=5)
+
+        # calculate_for_supplier method must produce identical output
+        res_for_supp = self.engine.calculate_for_supplier(self.daily_input, supplier="BACKUP")
+        self.assertEqual(res_for_supp.lead_time_mean_days, 0.8)
+        self.assertEqual(res_for_supp.lead_time_std_days, 0.15)
+        self.assertAlmostEqual(res_for_supp.safety_stock_lead_time, 15.3611645, places=5)
+
+    def test_greater_lead_time_uncertainty_does_not_reduce_safety_stock(self):
+        """
+        Mathematical invariant: d(SS)/d(sigma_LT) >= 0.
+        All else equal, increasing lead-time standard deviation must monotonically increase
+        (and never decrease) safety stock.
+        """
+        d_avg = 40.0
+        sigma_d = 8.0
+        lt_mean = 0.8
+        z = 1.645
+        r = 1.0
+
+        # Evaluate safety stock across strictly increasing sigma_LT values
+        sigmas = [0.0, 0.05, 0.10, 0.15, 0.20, 0.30, 0.50]
+        ss_lt_vals = [
+            compute_safety_stock(d_avg=d_avg, sigma_d=sigma_d, lt_mean=lt_mean, sigma_lt=s, z=z)
+            for s in sigmas
+        ]
+        ss_p_vals = [
+            compute_protection_safety_stock(d_avg=d_avg, sigma_d=sigma_d, lt_mean=lt_mean, review_period=r, sigma_lt=s, z=z)
+            for s in sigmas
+        ]
+
+        # Verify strict monotonicity
+        for i in range(len(sigmas) - 1):
+            self.assertLess(
+                ss_lt_vals[i],
+                ss_lt_vals[i + 1],
+                f"SS_LT violated monotonicity: sigma {sigmas[i]} ({ss_lt_vals[i]}) vs {sigmas[i+1]} ({ss_lt_vals[i+1]})"
+            )
+            self.assertLess(
+                ss_p_vals[i],
+                ss_p_vals[i + 1],
+                f"SS_P violated monotonicity: sigma {sigmas[i]} ({ss_p_vals[i]}) vs {sigmas[i+1]} ({ss_p_vals[i+1]})"
+            )
+
+    def test_recalculate_for_supplier_preserves_inputs_and_updates_metrics(self):
+        """recalculate_for_supplier updates lead time parameters while preserving position and demand."""
+        res_primary = self.engine.calculate(self.daily_input)
+        res_backup = self.engine.recalculate_for_supplier(res_primary, "BACKUP")
+
+        # Invariants preserved
+        self.assertEqual(res_backup.store_id, res_primary.store_id)
+        self.assertEqual(res_backup.sku_id, res_primary.sku_id)
+        self.assertEqual(res_backup.date, res_primary.date)
+        self.assertEqual(res_backup.average_daily_demand, res_primary.average_daily_demand)
+        self.assertEqual(res_backup.demand_uncertainty_sigma, res_primary.demand_uncertainty_sigma)
+        self.assertEqual(res_backup.inventory_position.on_hand_stock, res_primary.inventory_position.on_hand_stock)
+
+        # Supplier metrics updated to backup
+        self.assertEqual(res_backup.lead_time_mean_days, 0.8)
+        self.assertEqual(res_backup.lead_time_std_days, 0.15)
+        self.assertLess(res_backup.target_stock, res_primary.target_stock)
 
 
 if __name__ == "__main__":

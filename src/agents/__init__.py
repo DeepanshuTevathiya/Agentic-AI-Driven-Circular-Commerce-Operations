@@ -3,7 +3,24 @@ Lead 2 Package: Inventory, Procurement, and Fulfilment Agents
 Agentic AI-Driven Circular Commerce Operations
 """
 
-from .schemas import (
+# 1. Common configuration, data loader, and foundational schemas
+from .common import (
+    Lead2Config,
+    SupplierSimulationParams,
+    CategoryProcurementParams,
+    ProcurementApprovalThresholds,
+    CATEGORY_SUPPLIER_PARAMS,
+    CATEGORY_PROCUREMENT_PARAMS,
+    CANONICAL_STORES,
+    CANONICAL_SKUS,
+    CANONICAL_CATEGORIES,
+    SKU_TO_CATEGORY,
+    PROJECT_ROOT,
+    DATA_DIR,
+    PROCESSED_DATA_DIR,
+    RAW_DATA_DIR,
+    OUTPUTS_DIR,
+    get_default_config,
     DemandForecast,
     InventorySnapshot,
     InventoryPosition,
@@ -15,14 +32,13 @@ from .schemas import (
     ExpiryRiskLevel,
     InventoryBatch,
     InventoryRiskAssessment,
-)
-from .config import Lead2Config, SupplierSimulationParams, get_default_config
-from .data_loader import (
     DataLoader,
     IngestionAuditReport,
     load_daily_agent_inputs,
 )
-from .inventory_engine import (
+
+# 2. Core Inventory Calculation and Risk Assessment Engine
+from .inventory import (
     InventoryEngine,
     compute_average_daily_demand,
     compute_safety_stock,
@@ -37,7 +53,55 @@ from .inventory_engine import (
     assess_inventory_risk,
 )
 
+# 3. Procurement schemas, engine, approval policies, and purchase order data contracts
+from .procurement import (
+    SupplierType,
+    PurchaseOrderUrgency,
+    PurchaseOrderStatus,
+    ApprovalAction,
+    SupplierProfile,
+    PurchaseOrderLineItem,
+    PurchaseOrder,
+    PurchaseOrderAuditRecord,
+    ProcurementEngine,
+    ProcurementRecommendation,
+    get_simulated_supplier_profile,
+    select_supplier,
+    calculate_procurement_quantity,
+    load_retail_price_catalog,
+    DEFAULT_SKU_RETAIL_PRICES,
+    DEFAULT_CATEGORY_RETAIL_PRICES,
+    InvalidStatusTransitionError,
+    ApprovalGovernanceError,
+    validate_inbound_po,
+    evaluate_escalation_policies,
+    approve_purchase_order,
+    reject_purchase_order,
+    verify_approval_evidence,
+    is_issued_or_dispatched,
+    can_be_dispatched,
+    PurchaseOrderApprovalWorkflow,
+)
+
 __all__ = [
+    # Common Config
+    "Lead2Config",
+    "SupplierSimulationParams",
+    "CategoryProcurementParams",
+    "ProcurementApprovalThresholds",
+    "CATEGORY_SUPPLIER_PARAMS",
+    "CATEGORY_PROCUREMENT_PARAMS",
+    "CANONICAL_STORES",
+    "CANONICAL_SKUS",
+    "CANONICAL_CATEGORIES",
+    "SKU_TO_CATEGORY",
+    "PROJECT_ROOT",
+    "DATA_DIR",
+    "PROCESSED_DATA_DIR",
+    "RAW_DATA_DIR",
+    "OUTPUTS_DIR",
+    "get_default_config",
+    # Common Schemas
     "DemandForecast",
     "InventorySnapshot",
     "InventoryPosition",
@@ -49,12 +113,11 @@ __all__ = [
     "ExpiryRiskLevel",
     "InventoryBatch",
     "InventoryRiskAssessment",
-    "Lead2Config",
-    "SupplierSimulationParams",
-    "get_default_config",
+    # Common DataLoader
     "DataLoader",
     "IngestionAuditReport",
     "load_daily_agent_inputs",
+    # Inventory Engine
     "InventoryEngine",
     "compute_average_daily_demand",
     "compute_safety_stock",
@@ -67,4 +130,31 @@ __all__ = [
     "assess_stock_risk",
     "assess_expiry_risk",
     "assess_inventory_risk",
+    # Procurement Schemas, Engine & Approval Workflow
+    "SupplierType",
+    "PurchaseOrderUrgency",
+    "PurchaseOrderStatus",
+    "ApprovalAction",
+    "SupplierProfile",
+    "PurchaseOrderLineItem",
+    "PurchaseOrder",
+    "PurchaseOrderAuditRecord",
+    "ProcurementEngine",
+    "ProcurementRecommendation",
+    "get_simulated_supplier_profile",
+    "select_supplier",
+    "calculate_procurement_quantity",
+    "load_retail_price_catalog",
+    "DEFAULT_SKU_RETAIL_PRICES",
+    "DEFAULT_CATEGORY_RETAIL_PRICES",
+    "InvalidStatusTransitionError",
+    "ApprovalGovernanceError",
+    "validate_inbound_po",
+    "evaluate_escalation_policies",
+    "approve_purchase_order",
+    "reject_purchase_order",
+    "verify_approval_evidence",
+    "is_issued_or_dispatched",
+    "can_be_dispatched",
+    "PurchaseOrderApprovalWorkflow",
 ]

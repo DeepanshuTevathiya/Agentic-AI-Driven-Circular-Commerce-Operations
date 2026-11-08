@@ -1,6 +1,6 @@
 """
-Lead 2 Data Loader & Ingestion Pipeline
-=======================================
+Lead 2 Data Loader & Ingestion Pipeline (Common)
+================================================
 Implements robust, audited data ingestion for Lead 2 agents by joining:
 1. forecast_payloads_step2_corrected.parquet (probabilistic forecasts)
 2. df_master.parquet (authoritative beginning-of-day Opening_Stock)
@@ -70,7 +70,7 @@ class DataLoader:
             raise FileNotFoundError(f"Missing forecast file: {fpath}")
 
         df = pd.read_parquet(fpath)
-        
+
         # Explicit column mapping and normalization
         rename_map = {
             "Store_ID": "store_id",
@@ -85,7 +85,7 @@ class DataLoader:
             "Total_SL_Days": "total_shelf_life_days",
             "Remaining_SL_Days": "remaining_shelf_life_days",
         }
-        
+
         # Validate that expected raw columns exist
         required_cols = ["Store_ID", "SKU_ID", "Category", "Date", "p10_demand", "p50_demand", "p90_demand", "sigma_demand"]
         missing = [c for c in required_cols if c not in df.columns]
@@ -147,7 +147,7 @@ class DataLoader:
             raise FileNotFoundError(f"Missing master inventory file: {mpath}")
 
         df = pd.read_parquet(mpath)
-        
+
         required = ["Store_ID", "SKU_ID", "Date", "Opening_Stock"]
         missing = [c for c in required if c not in df.columns]
         if missing:
@@ -159,7 +159,7 @@ class DataLoader:
             "date": self._canonicalize_date(df["Date"]),
             "on_hand_stock": df["Opening_Stock"].astype(float),
         })
-        
+
         return norm_df
 
     def load_diagnostic_alerts(self, path: Optional[Path] = None) -> pd.DataFrame:
@@ -173,7 +173,7 @@ class DataLoader:
             return pd.DataFrame(columns=["store_id", "sku_id", "date", "unconfirmed_alert_count"])
 
         df = pd.read_parquet(ppath)
-        
+
         # Verify required columns
         for col in ["store_id", "sku_id", "current_date", "committed_preorder_units"]:
             if col not in df.columns:
@@ -185,7 +185,7 @@ class DataLoader:
             "date": self._canonicalize_date(df["current_date"]),
             "unconfirmed_alert_count": df["committed_preorder_units"].astype(int),
         })
-        
+
         return norm_df
 
     def load_harmonized_dataframe(
@@ -197,7 +197,7 @@ class DataLoader:
         """
         Loads, audits, and joins forecasts with authoritative beginning-of-day stock
         and diagnostic alerts.
-        
+
         Returns:
             Tuple of (harmonized_dataframe, IngestionAuditReport)
         """
@@ -215,7 +215,7 @@ class DataLoader:
 
         # 2. Check duplicate primary keys (store_id, sku_id, date) before merging
         key_cols = ["store_id", "sku_id", "date"]
-        
+
         fc_dup = fc_df.duplicated(subset=key_cols).sum()
         report.forecast_duplicates_detected = int(fc_dup)
         if fc_dup > 0:

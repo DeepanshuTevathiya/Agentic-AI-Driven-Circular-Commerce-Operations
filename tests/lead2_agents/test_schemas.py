@@ -15,7 +15,7 @@ Tests:
 import unittest
 from pydantic import ValidationError
 
-from src.agents.schemas import (
+from src.agents.common.schemas import (
     DemandForecast,
     InventorySnapshot,
     InventoryPosition,
