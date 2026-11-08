@@ -17,9 +17,10 @@ CRITICAL PROCUREMENT POLICIES & CONSTRAINTS:
 """
 
 import math
-from datetime import date as dt_date, datetime as dt_datetime
+import re
+from datetime import date as dt_date, datetime as dt_datetime, timezone
 from enum import Enum
-from typing import List, Optional, Tuple, Union
+from typing import Any, List, Optional, Tuple, Union
 from pydantic import (
     BaseModel,
     ConfigDict,
@@ -88,6 +89,88 @@ def _normalize_date_str(v: Union[str, dt_date, dt_datetime]) -> str:
         except ValueError as err:
             raise ValueError(f"Invalid date string '{v}'. Expected YYYY-MM-DD format.") from err
     raise ValueError(f"Unsupported date type: {type(v)}")
+
+
+# Strict ISO 8601 regex pattern: requires YYYY-MM-DDTHH:MM:SS with explicit timezone (Z or +/-HH:MM)
+ISO8601_STRICT_PATTERN = re.compile(
+    r"^\d{4}-(?:0[1-9]|1[0-2])-(?:0[1-9]|[12]\d|3[01])"
+    r"[Tt](?:[01]\d|2[0-3]):[0-5]\d:[0-5]\d(?:\.\d+)?"
+    r"(?:[Zz]|[+-](?:(?:0\d|1[0-3]):[0-5]\d|14:00))$"
+)
+
+
+def validate_and_normalize_iso_timestamp(
+    v: Any,
+    field_name: str = "timestamp",
+    error_cls: type = ValueError,
+) -> str:
+    """
+    Validates that the provided input is a valid, timezone-aware ISO 8601 timestamp,
+    and returns a normalized UTC ISO 8601 string representation ending in 'Z'.
+
+    Strict Validation Rules:
+    - Must be a non-empty string or timezone-aware datetime instance.
+    - Must match strict ISO 8601 format with explicit timezone (Z or +/-HH:MM offset).
+    - Timezone-naive timestamps, missing timezones, and malformed strings are rejected.
+    - Invalid calendar dates and times (e.g. Feb 30, hour 25, minute 60) are rejected.
+    - Invalid timezone offsets (e.g. +25:00, +05:60) are rejected.
+    - Successfully validated timestamps are normalized to UTC ending with 'Z'.
+    - Never uses machine local timezone or assumes UTC for naive inputs.
+
+    Args:
+        v: The input timestamp value to validate.
+        field_name: Name of the field for error reporting.
+        error_cls: Exception class to raise on error (default ValueError; can be ApprovalGovernanceError).
+
+    Returns:
+        Normalized UTC ISO 8601 string (e.g. '2026-11-08T12:30:00Z').
+    """
+    if v is None:
+        raise error_cls(f"Field '{field_name}' cannot be None.")
+
+    if isinstance(v, dt_datetime):
+        if v.tzinfo is None or v.tzinfo.utcoffset(v) is None:
+            raise error_cls(
+                f"Governance Violation: Field '{field_name}' must be timezone-aware. Naive datetime is prohibited."
+            )
+        dt_utc = v.astimezone(timezone.utc)
+        if dt_utc.microsecond == 0:
+            return dt_utc.strftime("%Y-%m-%dT%H:%M:%SZ")
+        return dt_utc.strftime("%Y-%m-%dT%H:%M:%S.%fZ")
+
+    if not isinstance(v, str):
+        raise error_cls(
+            f"Governance Violation: Field '{field_name}' must be a string or datetime, got {type(v).__name__}."
+        )
+
+    v_clean = v.strip()
+    if not v_clean:
+        raise error_cls(
+            f"Governance Violation: Field '{field_name}' cannot be empty or whitespace-only."
+        )
+
+    if not ISO8601_STRICT_PATTERN.match(v_clean):
+        raise error_cls(
+            f"Governance Violation: Field '{field_name}' must be a valid timezone-aware ISO 8601 timestamp "
+            f"(e.g. 'YYYY-MM-DDTHH:MM:SSZ' or '+HH:MM'). Got '{v}'."
+        )
+
+    try:
+        dt = dt_datetime.fromisoformat(v_clean)
+    except Exception as err:
+        raise error_cls(
+            f"Governance Violation: Field '{field_name}' has invalid date or time values: '{v}'."
+        ) from err
+
+    if dt.tzinfo is None or dt.tzinfo.utcoffset(dt) is None:
+        raise error_cls(
+            f"Governance Violation: Field '{field_name}' must have an explicit timezone offset or UTC indicator: '{v}'."
+        )
+
+    dt_utc = dt.astimezone(timezone.utc)
+    if dt_utc.microsecond == 0:
+        return dt_utc.strftime("%Y-%m-%dT%H:%M:%SZ")
+    return dt_utc.strftime("%Y-%m-%dT%H:%M:%S.%fZ")
 
 
 class SupplierProfile(BaseModel):
@@ -236,10 +319,15 @@ class PurchaseOrderAuditRecord(BaseModel):
     requires_escalation: bool = Field(..., description="Whether order had active escalation flags")
     escalation_reasons: Tuple[str, ...] = Field(default_factory=tuple, description="Escalation reasons active at review")
 
-    @field_validator("po_id", "reviewer_id", "reason", "timestamp")
+    @field_validator("po_id", "reviewer_id", "reason")
     @classmethod
     def validate_non_empty(cls, v: str, info) -> str:
         return _validate_non_empty_str(v, info.field_name)
+
+    @field_validator("timestamp", mode="before")
+    @classmethod
+    def validate_audit_timestamp(cls, v: Any) -> str:
+        return validate_and_normalize_iso_timestamp(v, field_name="timestamp", error_cls=ValueError)
 
 
 class PurchaseOrder(BaseModel):
@@ -304,6 +392,13 @@ class PurchaseOrder(BaseModel):
     def validate_date(cls, v: Union[str, dt_date]) -> str:
         return _normalize_date_str(v)
 
+    @field_validator("approval_timestamp", "rejection_timestamp", mode="before")
+    @classmethod
+    def validate_po_timestamps(cls, v: Any, info) -> Optional[str]:
+        if v is None:
+            return None
+        return validate_and_normalize_iso_timestamp(v, field_name=info.field_name, error_cls=ValueError)
+
     @model_validator(mode="after")
     def validate_purchase_order_integrity(self) -> "PurchaseOrder":
         # 1. Store consistency across all line items
@@ -336,8 +431,17 @@ class PurchaseOrder(BaseModel):
                 "requires_escalation must be True."
             )
 
-        # 5. MANDATORY HUMAN APPROVAL ENFORCEMENT
-        # A Purchase Order cannot be marked APPROVED or ISSUED without an explicit human signoff and timestamp
+        # 5. MANDATORY TERMINAL DECISION AUDIT TRAIL ENFORCEMENT
+        terminal_records = [
+            rec for rec in self.audit_trail
+            if rec.action in [ApprovalAction.APPROVE, ApprovalAction.REJECT]
+        ]
+
+        # 5a. MANDATORY HUMAN APPROVAL ENFORCEMENT (APPROVED or ISSUED)
+        # A Purchase Order cannot be marked APPROVED or ISSUED without explicit human signoff,
+        # normalized timestamp, and an exact matching APPROVE audit record in audit_trail.
+        # NOTE: Reviewer IDs are validated for consistency against the audit trail; authenticating
+        # human identity and role-based permissions remains an application-layer responsibility.
         if self.status in [PurchaseOrderStatus.APPROVED, PurchaseOrderStatus.ISSUED]:
             if not self.approved_by or not self.approved_by.strip():
                 raise ValueError(
@@ -350,9 +454,54 @@ class PurchaseOrder(BaseModel):
                     "without explicit approval timestamp ('approval_timestamp')."
                 )
 
-        # 6. MANDATORY REJECTION INTEGRITY ENFORCEMENT
-        # A Purchase Order cannot be marked REJECTED without reviewer, timestamp, and rejection reason
-        if self.status == PurchaseOrderStatus.REJECTED:
+            # Audit record presence and uniqueness
+            if len(terminal_records) == 0:
+                raise ValueError(
+                    f"Mandatory Governance Violation: Purchase Order '{self.po_id}' in status '{self.status.value}' "
+                    "must contain a matching APPROVE audit record in 'audit_trail'."
+                )
+            if len(terminal_records) > 1:
+                raise ValueError(
+                    f"Mandatory Governance Violation: Purchase Order '{self.po_id}' in status '{self.status.value}' "
+                    f"contains duplicate or conflicting terminal decision audit records ({len(terminal_records)} found)."
+                )
+
+            audit = terminal_records[0]
+            if audit.action != ApprovalAction.APPROVE:
+                raise ValueError(
+                    f"Mandatory Governance Violation: Purchase Order '{self.po_id}' in status '{self.status.value}' "
+                    f"has conflicting terminal decision action '{audit.action.value}'. Expected APPROVE."
+                )
+            if audit.po_id != self.po_id:
+                raise ValueError(
+                    f"Mandatory Governance Violation: Approval audit record po_id '{audit.po_id}' "
+                    f"does not match Purchase Order po_id '{self.po_id}'."
+                )
+            if audit.previous_status != PurchaseOrderStatus.PENDING_APPROVAL:
+                raise ValueError(
+                    f"Mandatory Governance Violation: Approval audit record previous_status '{audit.previous_status.value}' "
+                    "must be PENDING_APPROVAL."
+                )
+            if audit.new_status != PurchaseOrderStatus.APPROVED:
+                raise ValueError(
+                    f"Mandatory Governance Violation: Approval audit record new_status '{audit.new_status.value}' "
+                    "must be APPROVED."
+                )
+            if audit.reviewer_id != self.approved_by:
+                raise ValueError(
+                    f"Mandatory Governance Violation: Approval audit record reviewer_id '{audit.reviewer_id}' "
+                    f"does not match Purchase Order approved_by '{self.approved_by}'."
+                )
+            if audit.timestamp != self.approval_timestamp:
+                raise ValueError(
+                    f"Mandatory Governance Violation: Approval audit record timestamp '{audit.timestamp}' "
+                    f"does not match Purchase Order approval_timestamp '{self.approval_timestamp}'."
+                )
+
+        # 5b. MANDATORY REJECTION INTEGRITY ENFORCEMENT (REJECTED)
+        # A Purchase Order cannot be marked REJECTED without reviewer, timestamp, rejection reason,
+        # and an exact matching REJECT audit record in audit_trail.
+        elif self.status == PurchaseOrderStatus.REJECTED:
             if not self.rejected_by or not self.rejected_by.strip():
                 raise ValueError(
                     f"Mandatory Governance Violation: Purchase Order '{self.po_id}' cannot have status 'REJECTED' "
@@ -368,5 +517,75 @@ class PurchaseOrder(BaseModel):
                     f"Mandatory Governance Violation: Purchase Order '{self.po_id}' cannot have status 'REJECTED' "
                     "without explicit rejection reason ('rejection_reason')."
                 )
+
+            # Audit record presence and uniqueness
+            if len(terminal_records) == 0:
+                raise ValueError(
+                    f"Mandatory Governance Violation: Purchase Order '{self.po_id}' in status 'REJECTED' "
+                    "must contain a matching REJECT audit record in 'audit_trail'."
+                )
+            if len(terminal_records) > 1:
+                raise ValueError(
+                    f"Mandatory Governance Violation: Purchase Order '{self.po_id}' in status 'REJECTED' "
+                    f"contains duplicate or conflicting terminal decision audit records ({len(terminal_records)} found)."
+                )
+
+            audit = terminal_records[0]
+            if audit.action != ApprovalAction.REJECT:
+                raise ValueError(
+                    f"Mandatory Governance Violation: Purchase Order '{self.po_id}' in status 'REJECTED' "
+                    f"has conflicting terminal decision action '{audit.action.value}'. Expected REJECT."
+                )
+            if audit.po_id != self.po_id:
+                raise ValueError(
+                    f"Mandatory Governance Violation: Rejection audit record po_id '{audit.po_id}' "
+                    f"does not match Purchase Order po_id '{self.po_id}'."
+                )
+            if audit.previous_status != PurchaseOrderStatus.PENDING_APPROVAL:
+                raise ValueError(
+                    f"Mandatory Governance Violation: Rejection audit record previous_status '{audit.previous_status.value}' "
+                    "must be PENDING_APPROVAL."
+                )
+            if audit.new_status != PurchaseOrderStatus.REJECTED:
+                raise ValueError(
+                    f"Mandatory Governance Violation: Rejection audit record new_status '{audit.new_status.value}' "
+                    "must be REJECTED."
+                )
+            if audit.reviewer_id != self.rejected_by:
+                raise ValueError(
+                    f"Mandatory Governance Violation: Rejection audit record reviewer_id '{audit.reviewer_id}' "
+                    f"does not match Purchase Order rejected_by '{self.rejected_by}'."
+                )
+            if audit.timestamp != self.rejection_timestamp:
+                raise ValueError(
+                    f"Mandatory Governance Violation: Rejection audit record timestamp '{audit.timestamp}' "
+                    f"does not match Purchase Order rejection_timestamp '{self.rejection_timestamp}'."
+                )
+            if audit.reason != self.rejection_reason:
+                raise ValueError(
+                    f"Mandatory Governance Violation: Rejection audit record reason '{audit.reason}' "
+                    f"does not match Purchase Order rejection_reason '{self.rejection_reason}'."
+                )
+
+        # 5c. NON-TERMINAL STATUS AUDIT RECORD PROHIBITION (DRAFT, PENDING_APPROVAL)
+        elif self.status in [PurchaseOrderStatus.DRAFT, PurchaseOrderStatus.PENDING_APPROVAL]:
+            if len(terminal_records) > 0:
+                raise ValueError(
+                    f"Mandatory Governance Violation: Purchase Order '{self.po_id}' in status '{self.status.value}' "
+                    f"cannot contain terminal decision audit records ({len(terminal_records)} found)."
+                )
+
+        # 5d. PROHIBITION OF CANCELLED STATUS IN PHASE 4
+        # PurchaseOrderStatus.CANCELLED is reserved for a future explicit cancellation workflow.
+        # Direct construction or transition to CANCELLED is strictly prohibited in Phase 4 governance.
+        elif self.status == PurchaseOrderStatus.CANCELLED:
+            raise ValueError(
+                f"Mandatory Governance Violation: Purchase Order '{self.po_id}' cannot have status 'CANCELLED'. "
+                "Order cancellation is not supported in Phase 4 governance."
+            )
+        else:
+            raise ValueError(
+                f"Mandatory Governance Violation: Unsupported Purchase Order status '{self.status}'."
+            )
 
         return self

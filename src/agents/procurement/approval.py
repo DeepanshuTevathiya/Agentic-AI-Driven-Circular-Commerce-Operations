@@ -49,6 +49,7 @@ from .schemas import (
     PurchaseOrderAuditRecord,
     PurchaseOrderStatus,
     PurchaseOrderUrgency,
+    validate_and_normalize_iso_timestamp,
 )
 
 
@@ -201,7 +202,11 @@ def approve_purchase_order(
 
     # 3. Mandatory human approval evidence validation
     clean_approver = _validate_non_empty_str(approved_by, "approved_by")
-    clean_timestamp = _validate_non_empty_str(approval_timestamp, "approval_timestamp")
+    clean_timestamp = validate_and_normalize_iso_timestamp(
+        approval_timestamp,
+        field_name="approval_timestamp",
+        error_cls=ApprovalGovernanceError,
+    )
     clean_reason = (
         approval_reason.strip()
         if approval_reason and approval_reason.strip()
@@ -280,7 +285,11 @@ def reject_purchase_order(
 
     # 3. Mandatory human rejection evidence validation
     clean_reviewer = _validate_non_empty_str(rejected_by, "rejected_by")
-    clean_timestamp = _validate_non_empty_str(rejection_timestamp, "rejection_timestamp")
+    clean_timestamp = validate_and_normalize_iso_timestamp(
+        rejection_timestamp,
+        field_name="rejection_timestamp",
+        error_cls=ApprovalGovernanceError,
+    )
     clean_reason = _validate_non_empty_str(rejection_reason, "rejection_reason")
 
     # 4. Construct immutable audit record
@@ -318,8 +327,19 @@ def verify_approval_evidence(po: PurchaseOrder) -> bool:
     Verifies that a Purchase Order contains valid, verifiable human approval evidence.
     Required before any future dispatch or issuance operation.
 
+    Fails closed (returns False) if:
+    - Status is not APPROVED
+    - approved_by is missing or empty
+    - approval_timestamp is missing, empty, or not a valid ISO 8601 timestamp
+    - audit_trail lacks an exact matching APPROVE audit record
+    - audit_trail contains duplicate or conflicting terminal decision records
+    - Any audit record attribute (po_id, previous_status, new_status, reviewer_id, timestamp) mismatches
+
+    NOTE: Reviewer ID integrity is verified against audit trail evidence; human identity
+    authentication remains an application-layer responsibility.
+
     Returns:
-        True if order is APPROVED with valid approver and timestamp; False otherwise.
+        True if order is APPROVED with verified matching audit evidence; False otherwise.
     """
     if po.status != PurchaseOrderStatus.APPROVED:
         return False
@@ -327,6 +347,32 @@ def verify_approval_evidence(po: PurchaseOrder) -> bool:
         return False
     if not po.approval_timestamp or not po.approval_timestamp.strip():
         return False
+    try:
+        clean_ts = validate_and_normalize_iso_timestamp(po.approval_timestamp, "approval_timestamp")
+    except Exception:
+        return False
+
+    terminal_records = [
+        rec for rec in po.audit_trail
+        if rec.action in [ApprovalAction.APPROVE, ApprovalAction.REJECT]
+    ]
+    if len(terminal_records) != 1:
+        return False
+
+    audit = terminal_records[0]
+    if audit.action != ApprovalAction.APPROVE:
+        return False
+    if audit.po_id != po.po_id:
+        return False
+    if audit.previous_status != PurchaseOrderStatus.PENDING_APPROVAL:
+        return False
+    if audit.new_status != PurchaseOrderStatus.APPROVED:
+        return False
+    if audit.reviewer_id != po.approved_by:
+        return False
+    if audit.timestamp != clean_ts or audit.timestamp != po.approval_timestamp:
+        return False
+
     return True
 
 

@@ -255,6 +255,38 @@ class TestEndToEndPipelineScenarios(unittest.TestCase):
         self.assertEqual(pos[0].urgency, PurchaseOrderUrgency.EXPEDITE)
         self.assertEqual(pos[0].supplier_type, SupplierType.BACKUP)
 
+    def test_scenario_3b_critical_inventory_backup_rop_not_breached_suppresses_backup_po(self):
+        """Scenario 3b: When backup supplier is selected but backup ROP is not breached, no PO is generated."""
+        # Dairy: primary LT = 1.5d, backup LT = 0.8d.
+        # Demand = 40.0/day. On hand = 0.0 (physical stockout -> CRITICAL_LOW, coverage = 0.0 < 1.5d).
+        # But incoming on_order_stock = 50.0 -> IP = 50.0.
+        # Primary ROP = 85.48 (breached!).
+        # But Backup ROP = 47.36 (with sigma_D=8.0) -> IP (50.0) > 47.36 (NOT breached!).
+        agent_input = _make_agent_input(
+            sku_id="SKU_MILK_1L",
+            category="Dairy",
+            on_hand_stock=0.0,
+            p50_demand=40.0,
+        )
+        calc = self.inv_engine.calculate(agent_input, on_order_stock=50.0)
+        risk = self.inv_engine.assess_risk(calc, agent_input.forecast)
+
+        self.assertEqual(risk.stock_risk_level, StockRiskLevel.CRITICAL_LOW)
+
+        rec = self.proc_engine.generate_recommendation(calc, risk_assessment=risk)
+        self.assertEqual(rec.selected_supplier.supplier_type, SupplierType.BACKUP)
+        self.assertFalse(rec.reorder_triggered)
+        self.assertEqual(rec.raw_suggested_qty, 0.0)
+        self.assertEqual(rec.final_order_qty, 0.0)
+        self.assertIsNone(rec.line_item)
+        self.assertIn("Backup reorder threshold not breached", rec.supplier_selection_reason)
+
+        pos, _, _ = self.proc_engine.generate_purchase_orders(
+            [calc],
+            risk_assessments={(calc.store_id, calc.sku_id, calc.date): risk}
+        )
+        self.assertEqual(len(pos), 0)
+
     def test_scenario_4_case_pack_and_moq_rules_preserved(self):
         """Scenario 4: Case-pack rounding and MOQ constraints are strictly enforced across categories."""
         # Bakery: case pack = 10, MOQ = 15

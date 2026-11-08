@@ -62,6 +62,7 @@ from ..common.schemas import (
     StockRiskLevel,
 )
 from ..inventory.engine import (
+    InventoryEngine,
     compute_protection_safety_stock,
     compute_target_stock,
 )
@@ -370,9 +371,11 @@ class ProcurementEngine:
         self,
         config: Optional[Lead2Config] = None,
         price_catalog: Optional[Dict[str, float]] = None,
+        inventory_engine: Optional[Any] = None,
     ):
         self.config = config or get_default_config()
         self.price_catalog = price_catalog or load_retail_price_catalog()
+        self.inventory_engine = inventory_engine or InventoryEngine(self.config)
 
     def get_retail_price(
         self,
@@ -438,65 +441,110 @@ class ProcurementEngine:
                 config=self.config,
             )
 
-        # 3. If no replenishment is suggested, return zero recommendation
-        if calc_result.suggested_replenishment_qty <= 0.0:
-            return ProcurementRecommendation(
-                store_id=store_id,
-                sku_id=sku_id,
-                category=cat,
-                date=date,
-                reorder_triggered=calc_result.reorder_triggered,
-                selected_supplier=sel_supplier,
-                supplier_selection_reason=sel_reason,
-                raw_suggested_qty=0.0,
-                case_pack_rounded_qty=0.0,
-                moq_adjustment_qty=0.0,
-                final_order_qty=0.0,
-                unit_retail_price=retail_price,
-                unit_procurement_cost=round(retail_price * sel_supplier.cogs_ratio, 4),
-                total_line_cost=0.0,
-                requires_escalation=False,
-                escalation_reasons=[],
-                line_item=None,
-                assumed_zero_pipeline=calc_result.assumed_zero_pipeline,
-            )
-
-        # Use supplier-specific lead-time mean and variability (0.8d / 0.15d for backup)
+        # 3. Supplier-Specific Inventory & Reorder Evaluation
         if sel_supplier.supplier_type == SupplierType.BACKUP:
-            d_avg = calc_result.average_daily_demand
-            sigma_d = calc_result.demand_uncertainty_sigma
-            z = calc_result.z_score
-            review_period = calc_result.review_period_days
-            backup_lt = float(sel_supplier.lead_time_mean_days)
-            backup_sigma_lt = float(sel_supplier.lead_time_std_days)
+            # Recalculate complete inventory result using selected backup supplier's parameters
+            backup_calc = self.inventory_engine.recalculate_for_supplier(
+                calc_result=calc_result,
+                supplier=sel_supplier,
+                category=cat,
+            )
 
-            # Recalculate protection safety stock & target stock using backup supplier's parameters
-            ss_protection_backup = compute_protection_safety_stock(
-                d_avg=d_avg,
-                sigma_d=sigma_d,
-                lt_mean=backup_lt,
-                review_period=review_period,
-                sigma_lt=backup_sigma_lt,
-                z=z,
-            )
-            target_stock_backup = compute_target_stock(
-                d_avg=d_avg,
-                lt_mean=backup_lt,
-                review_period=review_period,
-                safety_stock=ss_protection_backup,
-            )
-            raw_qty = max(0.0, target_stock_backup - calc_result.total_inventory_position)
-            effective_target_stock = target_stock_backup
+            # Critical Reorder Condition: backup_inventory_position <= backup_reorder_point
+            if not backup_calc.reorder_triggered:
+                backup_reason = (
+                    f"{sel_reason}. Backup reorder threshold not breached: "
+                    f"inventory position ({backup_calc.total_inventory_position:.1f}) > "
+                    f"backup reorder point ({backup_calc.reorder_point:.1f}); replenishment not triggered."
+                )
+                return ProcurementRecommendation(
+                    store_id=store_id,
+                    sku_id=sku_id,
+                    category=cat,
+                    date=date,
+                    reorder_triggered=False,
+                    selected_supplier=sel_supplier,
+                    supplier_selection_reason=backup_reason,
+                    raw_suggested_qty=0.0,
+                    case_pack_rounded_qty=0.0,
+                    moq_adjustment_qty=0.0,
+                    final_order_qty=0.0,
+                    unit_retail_price=retail_price,
+                    unit_procurement_cost=round(retail_price * sel_supplier.cogs_ratio, 4),
+                    total_line_cost=0.0,
+                    requires_escalation=False,
+                    escalation_reasons=[],
+                    line_item=None,
+                    assumed_zero_pipeline=calc_result.assumed_zero_pipeline,
+                )
+
+            # Reorder condition satisfied (backup_ip <= backup_rop)
+            effective_reorder_triggered = True
+            raw_qty = float(backup_calc.suggested_replenishment_qty)
+            effective_target_stock = backup_calc.target_stock
+            effective_ip = backup_calc.total_inventory_position
+
+            # Case D: Inventory position meets or exceeds backup target stock (raw_qty <= 0)
+            if raw_qty <= 0.0:
+                target_reason = (
+                    f"{sel_reason}. Backup reorder triggered, but inventory position ({effective_ip:.1f}) "
+                    f"meets or exceeds backup target stock ({effective_target_stock:.1f}); replenishment quantity is zero."
+                )
+                return ProcurementRecommendation(
+                    store_id=store_id,
+                    sku_id=sku_id,
+                    category=cat,
+                    date=date,
+                    reorder_triggered=True,
+                    selected_supplier=sel_supplier,
+                    supplier_selection_reason=target_reason,
+                    raw_suggested_qty=0.0,
+                    case_pack_rounded_qty=0.0,
+                    moq_adjustment_qty=0.0,
+                    final_order_qty=0.0,
+                    unit_retail_price=retail_price,
+                    unit_procurement_cost=round(retail_price * sel_supplier.cogs_ratio, 4),
+                    total_line_cost=0.0,
+                    requires_escalation=False,
+                    escalation_reasons=[],
+                    line_item=None,
+                    assumed_zero_pipeline=calc_result.assumed_zero_pipeline,
+                )
         else:
+            # Primary supplier evaluation: preserve baseline calculation
+            if calc_result.suggested_replenishment_qty <= 0.0 or not calc_result.reorder_triggered:
+                return ProcurementRecommendation(
+                    store_id=store_id,
+                    sku_id=sku_id,
+                    category=cat,
+                    date=date,
+                    reorder_triggered=calc_result.reorder_triggered,
+                    selected_supplier=sel_supplier,
+                    supplier_selection_reason=sel_reason,
+                    raw_suggested_qty=0.0,
+                    case_pack_rounded_qty=0.0,
+                    moq_adjustment_qty=0.0,
+                    final_order_qty=0.0,
+                    unit_retail_price=retail_price,
+                    unit_procurement_cost=round(retail_price * sel_supplier.cogs_ratio, 4),
+                    total_line_cost=0.0,
+                    requires_escalation=False,
+                    escalation_reasons=[],
+                    line_item=None,
+                    assumed_zero_pipeline=calc_result.assumed_zero_pipeline,
+                )
+
+            effective_reorder_triggered = calc_result.reorder_triggered
             raw_qty = float(calc_result.suggested_replenishment_qty)
             effective_target_stock = calc_result.target_stock
+            effective_ip = calc_result.total_inventory_position
 
         # 4. Determine criticality status for quantity calculation
         if risk_assessment is not None:
             is_critical = (risk_assessment.stock_risk_level == StockRiskLevel.CRITICAL_LOW)
         else:
             on_hand = calc_result.inventory_position.on_hand_stock
-            ip = calc_result.total_inventory_position
+            ip = effective_ip
             ss_lt = calc_result.safety_stock_lead_time
             is_critical = (on_hand <= 0.0 or ip <= ss_lt)
 
@@ -511,7 +559,7 @@ class ProcurementEngine:
             raw_suggested_qty=raw_qty,
             case_pack_size=sel_supplier.case_pack_size,
             moq=sel_supplier.min_order_qty,
-            total_inventory_position=calc_result.total_inventory_position,
+            total_inventory_position=effective_ip,
             target_stock=effective_target_stock,
             is_critical=is_critical,
         )
@@ -574,7 +622,7 @@ class ProcurementEngine:
             sku_id=sku_id,
             category=cat,
             date=date,
-            reorder_triggered=calc_result.reorder_triggered,
+            reorder_triggered=effective_reorder_triggered,
             selected_supplier=sel_supplier,
             supplier_selection_reason=sel_reason,
             raw_suggested_qty=raw_qty,

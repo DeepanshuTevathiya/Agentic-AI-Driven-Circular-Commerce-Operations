@@ -611,5 +611,221 @@ class TestProcurementEngineGroupingAndGovernance(unittest.TestCase):
         self.assertIn("Mandatory Governance Violation", str(ctx.exception))
 
 
+class TestBackupSupplierReorderEvaluation(unittest.TestCase):
+    """
+    Focused verification for Fix 1: Supplier-Specific Reorder Evaluation for Backup Suppliers.
+    Ensures that when a backup supplier is selected (or forced):
+    1. Complete inventory evaluation is executed via InventoryEngine.recalculate_for_supplier().
+    2. Reorder condition (backup_inventory_position <= backup_reorder_point) is strictly enforced.
+    3. If backup ROP is not breached, no replenishment, no line item, and no PO is created.
+    4. Primary supplier behavior and calculations remain strictly unchanged.
+    """
+
+    def setUp(self):
+        self.engine = ProcurementEngine()
+        # Analytical reference parameters for Dairy:
+        # D_avg = 40.0, sigma_D = 5.0, Z = 1.645
+        # Primary: LT = 1.5, sigma_LT = 0.3, R = 1.0 -> SS_LT = 22.162, ROP = 82.162, Target Stock = 126.85
+        # Backup: LT = 0.8, sigma_LT = 0.15, R = 1.0 -> SS_LT = 12.310, ROP = 44.310, Target Stock = 86.805
+        self.backup_rop = 44.31005280248627
+        self.backup_target_stock = 86.805
+
+    def _make_dairy_calc(self, on_hand: float, primary_rop: float = 82.162) -> InventoryCalculationResult:
+        return _make_calc_result(
+            sku_id="SKU_MILK_1L",
+            on_hand_stock=on_hand,
+            average_daily_demand=40.0,
+            demand_uncertainty_sigma=5.0,
+            reorder_point=primary_rop,
+            target_stock=126.85,
+            suggested_replenishment_qty=max(0.0, 126.85 - on_hand),
+            reorder_triggered=(on_hand <= primary_rop),
+            assumed_zero_pipeline=False,
+        )
+
+    def test_case_a_backup_selected_but_backup_rop_not_breached(self):
+        """Case A: Backup supplier selected, but backup ROP not breached -> zero replenishment, no PO."""
+        # On hand = 50.0. Coverage = 50 / 40 = 1.25d < 1.5d (Primary LT).
+        # Primary ROP = 82.162 (breached!).
+        # But Backup ROP = 44.310 -> 50.0 > 44.310 (NOT breached!).
+        calc = self._make_dairy_calc(on_hand=50.0)
+        risk = _make_risk_assessment(calc, stock_risk_level=StockRiskLevel.CRITICAL_LOW)
+
+        rec = self.engine.generate_recommendation(calc_result=calc, risk_assessment=risk, unit_retail_price=50.0)
+
+        self.assertEqual(rec.selected_supplier.supplier_type, SupplierType.BACKUP)
+        self.assertFalse(rec.reorder_triggered)
+        self.assertEqual(rec.raw_suggested_qty, 0.0)
+        self.assertEqual(rec.case_pack_rounded_qty, 0.0)
+        self.assertEqual(rec.moq_adjustment_qty, 0.0)
+        self.assertEqual(rec.final_order_qty, 0.0)
+        self.assertEqual(rec.total_line_cost, 0.0)
+        self.assertIsNone(rec.line_item)
+        self.assertIn("Backup reorder threshold not breached", rec.supplier_selection_reason)
+
+        # Generating purchase orders must produce ZERO orders
+        pos, recs, audit = self.engine.generate_purchase_orders(
+            [calc],
+            risk_assessments={(calc.store_id, calc.sku_id, calc.date): risk}
+        )
+        self.assertEqual(len(pos), 0)
+
+    def test_case_b_inventory_position_exactly_equals_backup_rop(self):
+        """Case B: Inventory position exactly equals backup ROP -> reorder triggered (equality condition)."""
+        calc = self._make_dairy_calc(on_hand=self.backup_rop)
+        risk = _make_risk_assessment(calc, stock_risk_level=StockRiskLevel.CRITICAL_LOW)
+
+        rec = self.engine.generate_recommendation(calc_result=calc, risk_assessment=risk, unit_retail_price=50.0)
+
+        self.assertEqual(rec.selected_supplier.supplier_type, SupplierType.BACKUP)
+        self.assertTrue(rec.reorder_triggered)
+        expected_raw = self.backup_target_stock - self.backup_rop  # ~42.495
+        self.assertAlmostEqual(rec.raw_suggested_qty, expected_raw, places=4)
+        # Dairy case pack = 12 -> ceil(42.495 / 12) * 12 = 48.0
+        self.assertEqual(rec.case_pack_rounded_qty, 48.0)
+        self.assertEqual(rec.final_order_qty, 48.0)
+        self.assertIsNotNone(rec.line_item)
+
+        pos, _, _ = self.engine.generate_purchase_orders(
+            [calc],
+            risk_assessments={(calc.store_id, calc.sku_id, calc.date): risk}
+        )
+        self.assertEqual(len(pos), 1)
+        self.assertEqual(pos[0].supplier_type, SupplierType.BACKUP)
+        self.assertEqual(pos[0].urgency, PurchaseOrderUrgency.EXPEDITE)
+
+    def test_case_c_inventory_position_below_backup_rop(self):
+        """Case C: Inventory position strictly below backup ROP -> replenishment triggered using backup target stock."""
+        calc = self._make_dairy_calc(on_hand=20.0)
+        risk = _make_risk_assessment(calc, stock_risk_level=StockRiskLevel.CRITICAL_LOW)
+
+        rec = self.engine.generate_recommendation(calc_result=calc, risk_assessment=risk, unit_retail_price=50.0)
+
+        self.assertEqual(rec.selected_supplier.supplier_type, SupplierType.BACKUP)
+        self.assertTrue(rec.reorder_triggered)
+        expected_raw = self.backup_target_stock - 20.0  # 66.805
+        self.assertAlmostEqual(rec.raw_suggested_qty, expected_raw, places=4)
+        # ceil(66.805 / 12) * 12 = 72.0
+        self.assertEqual(rec.final_order_qty, 72.0)
+        self.assertIsNotNone(rec.line_item)
+
+    def test_case_d_inventory_position_above_backup_target_stock(self):
+        """Case D: Inventory position above backup target stock -> zero replenishment, no negative or unnecessary PO."""
+        calc = self._make_dairy_calc(on_hand=90.0)  # 90 > backup target stock (86.805)
+        supp = get_simulated_supplier_profile("Dairy", SupplierType.BACKUP)
+
+        rec = self.engine.generate_recommendation(calc_result=calc, supplier=supp, unit_retail_price=50.0)
+
+        self.assertEqual(rec.raw_suggested_qty, 0.0)
+        self.assertEqual(rec.final_order_qty, 0.0)
+        self.assertIsNone(rec.line_item)
+        pos, _, _ = self.engine.generate_purchase_orders([calc])
+        self.assertEqual(len(pos), 0)
+
+    def test_case_e_primary_supplier_selected_preserves_baseline(self):
+        """Case E: Primary supplier selected -> baseline calculation and reorder quantity remain completely unchanged."""
+        calc = self._make_dairy_calc(on_hand=50.0)  # 50 <= primary ROP (82.162)
+        # Non-critical -> primary supplier selected
+        risk = _make_risk_assessment(calc, stock_risk_level=StockRiskLevel.LOW_STOCK_REORDER)
+
+        rec = self.engine.generate_recommendation(calc_result=calc, risk_assessment=risk, unit_retail_price=50.0)
+
+        self.assertEqual(rec.selected_supplier.supplier_type, SupplierType.PRIMARY)
+        self.assertTrue(rec.reorder_triggered)
+        self.assertEqual(rec.raw_suggested_qty, calc.suggested_replenishment_qty)
+        self.assertEqual(rec.unit_procurement_cost, 50.0 * 0.60)
+        self.assertIsNotNone(rec.line_item)
+
+    def test_case_f_explicit_backup_supplier_override(self):
+        """Case F: Explicit backup supplier override applies the same supplier-specific reorder evaluation."""
+        calc = self._make_dairy_calc(on_hand=50.0)  # 50 > backup ROP (44.310)
+        backup_supp = get_simulated_supplier_profile("Dairy", SupplierType.BACKUP)
+
+        # Force override to backup supplier
+        rec = self.engine.generate_recommendation(calc_result=calc, supplier=backup_supp, unit_retail_price=50.0)
+
+        self.assertEqual(rec.selected_supplier.supplier_type, SupplierType.BACKUP)
+        self.assertFalse(rec.reorder_triggered)
+        self.assertEqual(rec.raw_suggested_qty, 0.0)
+        self.assertEqual(rec.final_order_qty, 0.0)
+        self.assertIsNone(rec.line_item)
+
+    def test_case_g_moq_and_case_pack_interaction(self):
+        """Case G: MOQ and case pack are never applied when supplier reorder is not triggered."""
+        calc = self._make_dairy_calc(on_hand=50.0)  # 50 > backup ROP, MOQ is 24
+        risk = _make_risk_assessment(calc, stock_risk_level=StockRiskLevel.CRITICAL_LOW)
+
+        rec = self.engine.generate_recommendation(calc_result=calc, risk_assessment=risk, unit_retail_price=50.0)
+
+        # Zero replenishment must NEVER be raised to MOQ (24)
+        self.assertEqual(rec.raw_suggested_qty, 0.0)
+        self.assertEqual(rec.case_pack_rounded_qty, 0.0)
+        self.assertEqual(rec.moq_adjustment_qty, 0.0)
+        self.assertEqual(rec.final_order_qty, 0.0)
+        self.assertIsNone(rec.line_item)
+
+    def test_case_h_po_grouping_with_zero_and_valid_backup_lines(self):
+        """Case H: Zero-quantity recommendations do not create empty POs and valid lines group correctly."""
+        # Item 1: Store 1, Milk, on_hand = 50.0 (Backup selected, but ROP not breached -> 0 qty)
+        calc_s1_milk = _make_calc_result(
+            store_id="DS_BLR_KORAMANGALA",
+            sku_id="SKU_MILK_1L",
+            on_hand_stock=50.0,
+            average_daily_demand=40.0,
+            reorder_point=82.162,
+            target_stock=126.85,
+            suggested_replenishment_qty=76.85,
+            reorder_triggered=True,
+        )
+        risk_s1_milk = _make_risk_assessment(calc_s1_milk, stock_risk_level=StockRiskLevel.CRITICAL_LOW)
+
+        # Item 2: Store 1, Curd, on_hand = 10.0 (Backup selected, ROP breached -> valid backup line)
+        calc_s1_curd = _make_calc_result(
+            store_id="DS_BLR_KORAMANGALA",
+            sku_id="SKU_CURD_400G",
+            on_hand_stock=10.0,
+            average_daily_demand=40.0,
+            reorder_point=82.162,
+            target_stock=126.85,
+            suggested_replenishment_qty=116.85,
+            reorder_triggered=True,
+        )
+        risk_s1_curd = _make_risk_assessment(calc_s1_curd, stock_risk_level=StockRiskLevel.CRITICAL_LOW)
+
+        # Item 3: Store 2, Milk, on_hand = 20.0 (Primary selected -> valid primary line)
+        calc_s2_milk = _make_calc_result(
+            store_id="DS_BLR_INDIRANAGAR",
+            sku_id="SKU_MILK_1L",
+            on_hand_stock=20.0,
+            average_daily_demand=20.0,
+            reorder_point=40.0,
+            target_stock=60.0,
+            suggested_replenishment_qty=40.0,
+            reorder_triggered=True,
+        )
+        risk_s2_milk = _make_risk_assessment(calc_s2_milk, stock_risk_level=StockRiskLevel.LOW_STOCK_REORDER)
+
+        pos, recs, audit = self.engine.generate_purchase_orders(
+            [calc_s1_milk, calc_s1_curd, calc_s2_milk],
+            risk_assessments={
+                (calc_s1_milk.store_id, calc_s1_milk.sku_id, calc_s1_milk.date): risk_s1_milk,
+                (calc_s1_curd.store_id, calc_s1_curd.sku_id, calc_s1_curd.date): risk_s1_curd,
+                (calc_s2_milk.store_id, calc_s2_milk.sku_id, calc_s2_milk.date): risk_s2_milk,
+            }
+        )
+
+        # Exactly 2 POs: Store 1 Backup (only Curd, NOT Milk) and Store 2 Primary
+        self.assertEqual(len(pos), 2)
+        s1_backup_po = next(p for p in pos if p.store_id == "DS_BLR_KORAMANGALA")
+        self.assertEqual(s1_backup_po.supplier_type, SupplierType.BACKUP)
+        self.assertEqual(len(s1_backup_po.items), 1)
+        self.assertEqual(s1_backup_po.items[0].sku_id, "SKU_CURD_400G")
+
+        s2_primary_po = next(p for p in pos if p.store_id == "DS_BLR_INDIRANAGAR")
+        self.assertEqual(s2_primary_po.supplier_type, SupplierType.PRIMARY)
+        self.assertEqual(len(s2_primary_po.items), 1)
+        self.assertEqual(s2_primary_po.items[0].sku_id, "SKU_MILK_1L")
+
+
 if __name__ == "__main__":
     unittest.main()

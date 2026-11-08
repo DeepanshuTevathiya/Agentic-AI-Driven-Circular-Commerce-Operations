@@ -13,6 +13,8 @@ from .schemas import (
     PurchaseOrderLineItem,
     PurchaseOrder,
     PurchaseOrderAuditRecord,
+    ISO8601_STRICT_PATTERN,
+    validate_and_normalize_iso_timestamp,
 )
 from .engine import (
     ProcurementEngine,
@@ -46,6 +48,8 @@ __all__ = [
     "PurchaseOrderLineItem",
     "PurchaseOrder",
     "PurchaseOrderAuditRecord",
+    "ISO8601_STRICT_PATTERN",
+    "validate_and_normalize_iso_timestamp",
     "ProcurementEngine",
     "ProcurementRecommendation",
     "get_simulated_supplier_profile",

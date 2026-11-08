@@ -15,10 +15,12 @@ import unittest
 from pydantic import ValidationError
 
 from src.agents.procurement.schemas import (
+    ApprovalAction,
     SupplierProfile,
     SupplierType,
     PurchaseOrderLineItem,
     PurchaseOrder,
+    PurchaseOrderAuditRecord,
     PurchaseOrderUrgency,
     PurchaseOrderStatus,
 )
@@ -564,7 +566,38 @@ class TestPurchaseOrderSchema(unittest.TestCase):
             )
         self.assertIn("Mandatory Governance Violation", str(ctx.exception))
 
-        # Status APPROVED with explicit human signoff succeeds
+        # Status APPROVED without audit record must fail
+        with self.assertRaises(ValidationError) as ctx:
+            PurchaseOrder(
+                po_id="PO-APPROVAL-TEST",
+                created_date="2024-11-15",
+                store_id="DS_BLR_KORAMANGALA",
+                supplier_id="SUPP_DAIRY_PRIMARY_01",
+                supplier_type=SupplierType.PRIMARY,
+                items=[self.item1],
+                total_order_qty=24.0,
+                total_order_cost=720.0,
+                status=PurchaseOrderStatus.APPROVED,
+                approved_by="Operator_Lead_Ops_BLR_01",
+                approval_timestamp="2024-11-15T10:30:00Z",
+            )
+        self.assertIn("Mandatory Governance Violation", str(ctx.exception))
+        self.assertIn("must contain a matching APPROVE audit record", str(ctx.exception))
+
+        # Matching APPROVE audit record
+        audit_record_approved = PurchaseOrderAuditRecord(
+            po_id="PO-APPROVAL-TEST",
+            previous_status=PurchaseOrderStatus.PENDING_APPROVAL,
+            new_status=PurchaseOrderStatus.APPROVED,
+            reviewer_id="Operator_Lead_Ops_BLR_01",
+            timestamp="2024-11-15T10:30:00Z",
+            action=ApprovalAction.APPROVE,
+            reason="Approved by authorized human operator.",
+            requires_escalation=False,
+            escalation_reasons=(),
+        )
+
+        # Status APPROVED with explicit human signoff and matching audit record succeeds
         po_approved = PurchaseOrder(
             po_id="PO-APPROVAL-TEST",
             created_date="2024-11-15",
@@ -577,11 +610,13 @@ class TestPurchaseOrderSchema(unittest.TestCase):
             status=PurchaseOrderStatus.APPROVED,
             approved_by="Operator_Lead_Ops_BLR_01",
             approval_timestamp="2024-11-15T10:30:00Z",
+            audit_trail=(audit_record_approved,),
         )
         self.assertEqual(po_approved.status, PurchaseOrderStatus.APPROVED)
         self.assertEqual(po_approved.approved_by, "Operator_Lead_Ops_BLR_01")
+        self.assertEqual(len(po_approved.audit_trail), 1)
 
-        # Status ISSUED with explicit human signoff succeeds
+        # Status ISSUED with explicit human signoff and matching audit record succeeds
         po_issued = PurchaseOrder(
             po_id="PO-APPROVAL-TEST",
             created_date="2024-11-15",
@@ -594,8 +629,10 @@ class TestPurchaseOrderSchema(unittest.TestCase):
             status=PurchaseOrderStatus.ISSUED,
             approved_by="Operator_Lead_Ops_BLR_01",
             approval_timestamp="2024-11-15T10:30:00Z",
+            audit_trail=(audit_record_approved,),
         )
         self.assertEqual(po_issued.status, PurchaseOrderStatus.ISSUED)
+        self.assertEqual(len(po_issued.audit_trail), 1)
 
 
 class TestProcurementConfigIntegration(unittest.TestCase):
