@@ -2,3 +2,13 @@
 __pycache__/
 *.py[cod]
 *$py.class
+
+# SQLite databases & WAL files
+data/fulfilment/*.db
+data/fulfilment/*.db-wal
+data/fulfilment/*.db-shm
+*.db
+*.db-wal
+*.db-shm
+*.sqlite
+*.sqlite3

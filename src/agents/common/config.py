@@ -24,6 +24,8 @@ DATA_DIR = PROJECT_ROOT / "data"
 PROCESSED_DATA_DIR = DATA_DIR / "processed"
 RAW_DATA_DIR = DATA_DIR / "raw"
 OUTPUTS_DIR = PROJECT_ROOT / "outputs"
+FULFILMENT_DATA_DIR = DATA_DIR / "fulfilment"
+DEFAULT_FULFILMENT_DB_PATH = FULFILMENT_DATA_DIR / "fulfilment.db"
 
 
 # Known canonical dark-store hubs in Bangalore
@@ -164,21 +166,35 @@ class ProcurementApprovalThresholds:
     flag_assumed_zero_pipeline_reorders: bool = True  # Flag LOW_STOCK_REORDER under assumed-zero pipeline
 
 
+@dataclass(frozen=True)
+class FulfilmentThresholds:
+    """
+    Independent operational and escalation thresholds for Fulfilment and Dock Receiving.
+
+    IMPORTANT:
+    This threshold is independently calibrated for dock discrepancy triage and must
+    NOT be coupled to procurement line-item approval thresholds.
+    """
+    max_dock_discrepancy_cost_inr: float = 5000.0  # Line discrepancy > ₹5,000 strictly triggers supervisor sign-off
+    min_acceptable_shelf_life_ratio: float = 0.60  # Minimum remaining shelf life ratio required for dock acceptance
+    require_supervisor_signoff_above_threshold: bool = True
+
+
 @dataclass
 class Lead2Config:
     """
-    Master configuration object for Lead 2 agents, data loaders, and procurement engine.
+    Master configuration object for Lead 2 agents, data loaders, procurement, and fulfilment engines.
     """
     # File paths
     forecast_file: Path = PROCESSED_DATA_DIR / "forecast_payloads_step2_corrected.parquet"
     master_file: Path = PROCESSED_DATA_DIR / "df_master.parquet"
     preorders_file: Path = PROCESSED_DATA_DIR / "committed_preorders_step3.parquet"
-    
+
     # Inventory service level configuration
     default_service_level: float = 0.95
     default_z_score: float = 1.645      # Standard normal inverse CDF for 95% cycle service level
     contingency_z_score: float = 1.960  # Contingency Z for 97.5% cycle service level
-    
+
     # Supplier simulation settings (Inventory Engine)
     default_supplier_params: SupplierSimulationParams = field(default_factory=SupplierSimulationParams)
     category_supplier_params: Dict[str, SupplierSimulationParams] = field(
@@ -192,9 +208,12 @@ class Lead2Config:
     procurement_thresholds: ProcurementApprovalThresholds = field(
         default_factory=ProcurementApprovalThresholds
     )
+    fulfilment_thresholds: FulfilmentThresholds = field(
+        default_factory=FulfilmentThresholds
+    )
+    fulfilment_db_path: Path = DEFAULT_FULFILMENT_DB_PATH
 
 
 def get_default_config() -> Lead2Config:
     """Returns a default Lead2Config instance."""
     return Lead2Config()
-

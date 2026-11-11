@@ -37,7 +37,7 @@ from .common import (
     load_daily_agent_inputs,
 )
 
-# 2. Core Inventory Calculation and Risk Assessment Engine
+# 2. Core Inventory Calculation, Risk Assessment & Operational Ledger
 from .inventory import (
     InventoryEngine,
     compute_average_daily_demand,
@@ -51,6 +51,19 @@ from .inventory import (
     assess_stock_risk,
     assess_expiry_risk,
     assess_inventory_risk,
+    OperationalInventoryRepository,
+    InventoryTransactionType,
+    InventoryPostingReason,
+    InventoryLedgerEntry,
+    InventoryBatchRecord,
+    StoreSkuBalance,
+    BatchBalance,
+    GrnPostingReconciliation,
+    GrnLinePostingReconciliation,
+    InventoryGovernanceError,
+    DuplicateBatchPostingError,
+    InventoryPersistenceError,
+    IdempotencyConflictError as InventoryIdempotencyConflictError,
 )
 
 # 3. Procurement schemas, engine, approval policies, and purchase order data contracts
@@ -119,7 +132,7 @@ __all__ = [
     "DataLoader",
     "IngestionAuditReport",
     "load_daily_agent_inputs",
-    # Inventory Engine
+    # Inventory Engine & Operational Ledger
     "InventoryEngine",
     "compute_average_daily_demand",
     "compute_safety_stock",
@@ -132,6 +145,19 @@ __all__ = [
     "assess_stock_risk",
     "assess_expiry_risk",
     "assess_inventory_risk",
+    "OperationalInventoryRepository",
+    "InventoryTransactionType",
+    "InventoryPostingReason",
+    "InventoryLedgerEntry",
+    "InventoryBatchRecord",
+    "StoreSkuBalance",
+    "BatchBalance",
+    "GrnPostingReconciliation",
+    "GrnLinePostingReconciliation",
+    "InventoryGovernanceError",
+    "DuplicateBatchPostingError",
+    "InventoryPersistenceError",
+    "InventoryIdempotencyConflictError",
     # Procurement Schemas, Engine & Approval Workflow
     "SupplierType",
     "PurchaseOrderUrgency",
