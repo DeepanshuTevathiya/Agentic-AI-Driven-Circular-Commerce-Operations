@@ -26,6 +26,8 @@ RAW_DATA_DIR = DATA_DIR / "raw"
 OUTPUTS_DIR = PROJECT_ROOT / "outputs"
 FULFILMENT_DATA_DIR = DATA_DIR / "fulfilment"
 DEFAULT_FULFILMENT_DB_PATH = FULFILMENT_DATA_DIR / "fulfilment.db"
+COORDINATOR_DATA_DIR = DATA_DIR / "coordinator"
+DEFAULT_COORDINATOR_DB_PATH = COORDINATOR_DATA_DIR / "coordinator.db"
 
 
 # Known canonical dark-store hubs in Bangalore
@@ -212,6 +214,7 @@ class Lead2Config:
         default_factory=FulfilmentThresholds
     )
     fulfilment_db_path: Path = DEFAULT_FULFILMENT_DB_PATH
+    coordinator_db_path: Path = DEFAULT_COORDINATOR_DB_PATH
 
 
 def get_default_config() -> Lead2Config:

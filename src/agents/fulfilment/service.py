@@ -491,6 +491,11 @@ class FulfilmentService:
     def close(self) -> None:
         """Closes the underlying repository connections."""
         self.repository.close()
+        if hasattr(self.gateway, "close"):
+            try:
+                self.gateway.close()
+            except Exception:
+                pass
         if self._inventory_repository is not None:
             self._inventory_repository.close()
 
