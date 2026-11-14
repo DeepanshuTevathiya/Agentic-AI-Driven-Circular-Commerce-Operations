@@ -25,10 +25,12 @@ ARCHITECTURAL PRINCIPLES:
 from abc import ABC, abstractmethod
 from datetime import datetime as dt_datetime, timedelta, timezone
 from enum import Enum
+from functools import wraps
 import json
 import math
 from pathlib import Path
 import sqlite3
+import threading
 from typing import Any, Dict, List, Optional, Protocol, Tuple, Union, runtime_checkable
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
@@ -287,6 +289,24 @@ class SupplierGatewayProtocol(Protocol):
         ...
 
 
+def _gateway_locked(func):
+    """Decorator ensuring reentrant thread safety across gateway operations."""
+    @wraps(func)
+    def wrapper(self, *args, **kwargs):
+        with self._lock:
+            return func(self, *args, **kwargs)
+    return wrapper
+
+
+def _lock_all_methods(cls):
+    """Automatically wraps all callable public methods and _init_storage with _gateway_locked."""
+    for attr_name, attr_val in list(cls.__dict__.items()):
+        if callable(attr_val) and (not attr_name.startswith("_") or attr_name == "_init_storage"):
+            setattr(cls, attr_name, _gateway_locked(attr_val))
+    return cls
+
+
+@_lock_all_methods
 class SimulatedSupplierAdapter(SupplierGateway):
     """
     Deterministic simulated supplier adapter.
@@ -312,6 +332,7 @@ class SimulatedSupplierAdapter(SupplierGateway):
         db_path: Optional[Union[str, Path]] = None,
         connection: Optional[sqlite3.Connection] = None,
     ) -> None:
+        self._lock = threading.RLock()
         self._default_scenario = default_scenario
         self._default_rejection_reason = default_rejection_reason
         self._default_lead_time_hours = default_lead_time_hours
@@ -333,16 +354,18 @@ class SimulatedSupplierAdapter(SupplierGateway):
             self._init_storage()
 
     def _get_db_connection(self) -> Optional[sqlite3.Connection]:
-        if self._conn is not None:
-            return self._conn
-        if self.db_path is not None:
-            if str(self.db_path) != ":memory:":
-                Path(self.db_path).parent.mkdir(parents=True, exist_ok=True)
-            self._conn = sqlite3.connect(str(self.db_path), check_same_thread=False)
-            self._conn.execute("PRAGMA foreign_keys = ON;")
-            self._conn.execute("PRAGMA busy_timeout = 10000;")
-            self._conn.row_factory = sqlite3.Row
-            return self._conn
+        with self._lock:
+            if self._conn is not None:
+                return self._conn
+            if self.db_path is not None:
+                if str(self.db_path) != ":memory:":
+                    Path(self.db_path).parent.mkdir(parents=True, exist_ok=True)
+                self._conn = sqlite3.connect(str(self.db_path), check_same_thread=False)
+                self._conn.execute("PRAGMA foreign_keys = ON;")
+                self._conn.execute("PRAGMA busy_timeout = 10000;")
+                self._conn.row_factory = sqlite3.Row
+                return self._conn
+            return None
         return None
 
     def close(self) -> None:
@@ -1037,3 +1060,7 @@ class SimulatedSupplierAdapter(SupplierGateway):
         lead_hours = self._resolve_lead_time_hours(po)
         dt_delivery = dt_base + timedelta(hours=lead_hours)
         return dt_delivery.strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
+# Canonical alias for SimulatedSupplierAdapter
+SimulatedSupplierGateway = SimulatedSupplierAdapter

@@ -600,6 +600,9 @@ class CoordinatorRepository:
                 )
             return records
 
+    # Convenience alias
+    get_audit_log = get_audit_records_for_execution
+
     # -------------------------------------------------------------------------
     # Crash / Restart Recovery
     # -------------------------------------------------------------------------

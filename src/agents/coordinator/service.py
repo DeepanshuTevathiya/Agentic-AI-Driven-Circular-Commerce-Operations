@@ -824,30 +824,35 @@ class MultiAgentCoordinator:
                     if "override_scenario" in op_inputs:
                         trans_input["override_scenario"] = op_inputs["override_scenario"]
                     if "asn" in op_inputs:
-                        trans_input["asn"] = op_inputs["asn"]
+                        raw_asn = op_inputs["asn"]
+                        asn_po = raw_asn.get("po_id") if isinstance(raw_asn, dict) else getattr(raw_asn, "po_id", None)
+                        if not asn_po or asn_po == po_id:
+                            trans_input["asn"] = raw_asn
                     elif "grn" in op_inputs:
                         raw_grn = op_inputs["grn"]
-                        shp_id = raw_grn.get("shipment_id") if isinstance(raw_grn, dict) else getattr(raw_grn, "shipment_id", None)
-                        if shp_id:
-                            supp_id = raw_po.get("supplier_id") if isinstance(raw_po, dict) else getattr(raw_po, "supplier_id", "SUPPLIER")
-                            c_date = raw_po.get("created_date") if isinstance(raw_po, dict) else getattr(raw_po, "created_date", "2024-11-15")
-                            lines_raw = raw_grn.get("inspection_lines", []) if isinstance(raw_grn, dict) else getattr(raw_grn, "inspection_lines", [])
-                            trans_input["asn"] = {
-                                "shipment_id": shp_id,
-                                "fo_id": trans_input["fo_id"],
-                                "po_id": po_id,
-                                "supplier_id": supp_id,
-                                "dispatch_at": f"{c_date}T11:00:00Z",
-                                "expected_arrival_at": f"{c_date}T14:00:00Z",
-                                "lines": [
-                                    {
-                                        "sku_id": line.get("sku_id") if isinstance(line, dict) else getattr(line, "sku_id"),
-                                        "shipped_quantity": float(line.get("shipped_quantity", line.get("ordered_quantity", 1.0)) if isinstance(line, dict) else getattr(line, "shipped_quantity", getattr(line, "ordered_quantity", 1.0))),
-                                    }
-                                    for line in lines_raw
-                                ],
-                                "carrier": "BLR_COLD_EXPRESS",
-                            }
+                        grn_po = raw_grn.get("po_id") if isinstance(raw_grn, dict) else getattr(raw_grn, "po_id", None)
+                        if not grn_po or grn_po == po_id:
+                            shp_id = raw_grn.get("shipment_id") if isinstance(raw_grn, dict) else getattr(raw_grn, "shipment_id", None)
+                            if shp_id:
+                                supp_id = raw_po.get("supplier_id") if isinstance(raw_po, dict) else getattr(raw_po, "supplier_id", "SUPPLIER")
+                                c_date = raw_po.get("created_date") if isinstance(raw_po, dict) else getattr(raw_po, "created_date", "2024-11-15")
+                                lines_raw = raw_grn.get("inspection_lines", []) if isinstance(raw_grn, dict) else getattr(raw_grn, "inspection_lines", [])
+                                trans_input["asn"] = {
+                                    "shipment_id": shp_id,
+                                    "fo_id": trans_input["fo_id"],
+                                    "po_id": po_id,
+                                    "supplier_id": supp_id,
+                                    "dispatch_at": f"{c_date}T11:00:00Z",
+                                    "expected_arrival_at": f"{c_date}T14:00:00Z",
+                                    "lines": [
+                                        {
+                                            "sku_id": line.get("sku_id") if isinstance(line, dict) else getattr(line, "sku_id"),
+                                            "shipped_quantity": float(line.get("shipped_quantity", line.get("ordered_quantity", 1.0)) if isinstance(line, dict) else getattr(line, "shipped_quantity", getattr(line, "ordered_quantity", 1.0))),
+                                        }
+                                        for line in lines_raw
+                                    ],
+                                    "carrier": "BLR_COLD_EXPRESS",
+                                }
 
                     trans_task = TaskContext(
                         task_id=trans_task_id,

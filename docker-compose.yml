@@ -1,0 +1,40 @@
+version: "3.8"
+
+services:
+  pipeline:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: demand-consumption-pipeline:latest
+    container_name: agy_pipeline_service
+    restart: unless-stopped
+    ports:
+      - "8000:8000"
+    environment:
+      - PIPELINE_ENV=production
+      - API_HOST=0.0.0.0
+      - API_PORT=8000
+      - LOG_LEVEL=INFO
+      - MAX_WORKERS=4
+      - OPERATOR_API_KEY=${OPERATOR_API_KEY:-agy-secret-lead2-key}
+      - AUTHORIZED_OPERATORS=${AUTHORIZED_OPERATORS:-admin,ops_lead,lead2_supervisor}
+      - COORDINATOR_DB_PATH=/app/data/coordinator/coordinator.db
+      - FULFILMENT_DB_PATH=/app/data/fulfilment/fulfilment.db
+      - DATASET_PATH=/app/data/processed/df_featured.parquet
+      - MODELS_DIR=/app/outputs
+    volumes:
+      - coordinator_data:/app/data/coordinator
+      - fulfilment_data:/app/data/fulfilment
+    healthcheck:
+      test: ["CMD-SHELL", "python -c \"import urllib.request; urllib.request.urlopen('http://localhost:8000/api/v1/health')\" || exit 1"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+
+volumes:
+  coordinator_data:
+    name: agy_coordinator_data
+  fulfilment_data:
+    name: agy_fulfilment_data
+

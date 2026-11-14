@@ -14,9 +14,11 @@ GOVERNANCE RULES:
    orders without maintaining a separate mutable counter.
 """
 
+from functools import wraps
 import json
 from pathlib import Path
 import sqlite3
+import threading
 from typing import Any, Dict, Iterable, List, Optional, Set, Tuple, Union
 
 from src.agents.common.config import DEFAULT_FULFILMENT_DB_PATH
@@ -85,6 +87,24 @@ ACTIVE_PIPELINE_STATUSES: Tuple[str, ...] = (
 )
 
 
+def _repo_locked(func):
+    """Decorator ensuring reentrant thread safety across repository operations."""
+    @wraps(func)
+    def wrapper(self, *args, **kwargs):
+        with self._lock:
+            return func(self, *args, **kwargs)
+    return wrapper
+
+
+def _lock_all_methods(cls):
+    """Automatically wraps all callable public methods and _init_db with _repo_locked."""
+    for attr_name, attr_val in list(cls.__dict__.items()):
+        if callable(attr_val) and (not attr_name.startswith("_") or attr_name == "_init_db"):
+            setattr(cls, attr_name, _repo_locked(attr_val))
+    return cls
+
+
+@_lock_all_methods
 class FulfilmentRepository:
     """
     Durable SQLite repository for FulfilmentOrder aggregates.
@@ -100,6 +120,7 @@ class FulfilmentRepository:
         self.db_path = Path(db_path) if db_path is not None else DEFAULT_FULFILMENT_DB_PATH
         self.timeout = timeout
         self._conn: Optional[sqlite3.Connection] = None
+        self._lock = threading.RLock()
 
         # Auto-create parent directory if file-based database
         if str(self.db_path) != ":memory:":

@@ -748,50 +748,51 @@ class OperationalInventoryRepository:
         if not clean_store:
             return []
 
-        conn = self._get_connection()
-        # Find distinct SKUs with movements
-        sku_rows = conn.execute(
-            """
-            SELECT sku_id,
-                   COALESCE(SUM(quantity), 0.0) as on_hand_stock,
-                   COALESCE(SUM(total_cost), 0.0) as total_cost_inr,
-                   MAX(timestamp) as last_movement_at
-            FROM inventory_ledger_entries
-            WHERE store_id = ?
-            GROUP BY sku_id
-            HAVING SUM(quantity) > 1e-4
-            ORDER BY sku_id ASC
-            """,
-            (clean_store,),
-        ).fetchall()
-
-        results: List[StoreSkuBalance] = []
-        for r in sku_rows:
-            sku = r["sku_id"]
-            # Count active batches
-            batch_count_row = conn.execute(
+        with self._lock:
+            conn = self._get_connection()
+            # Find distinct SKUs with movements
+            sku_rows = conn.execute(
                 """
-                SELECT COUNT(DISTINCT batch_id)
+                SELECT sku_id,
+                       COALESCE(SUM(quantity), 0.0) as on_hand_stock,
+                       COALESCE(SUM(total_cost), 0.0) as total_cost_inr,
+                       MAX(timestamp) as last_movement_at
                 FROM inventory_ledger_entries
-                WHERE store_id = ? AND sku_id = ?
-                GROUP BY batch_id
+                WHERE store_id = ?
+                GROUP BY sku_id
                 HAVING SUM(quantity) > 1e-4
+                ORDER BY sku_id ASC
                 """,
-                (clean_store, sku),
+                (clean_store,),
             ).fetchall()
-            active_batches = len(batch_count_row)
 
-            results.append(
-                StoreSkuBalance(
-                    store_id=clean_store,
-                    sku_id=sku,
-                    on_hand_stock=round(r["on_hand_stock"], 4),
-                    total_cost_inr=max(0.0, round(r["total_cost_inr"], 2)),
-                    active_batch_count=active_batches,
-                    last_movement_at=r["last_movement_at"],
+            results: List[StoreSkuBalance] = []
+            for r in sku_rows:
+                sku = r["sku_id"]
+                # Count active batches
+                batch_count_row = conn.execute(
+                    """
+                    SELECT COUNT(DISTINCT batch_id)
+                    FROM inventory_ledger_entries
+                    WHERE store_id = ? AND sku_id = ?
+                    GROUP BY batch_id
+                    HAVING SUM(quantity) > 1e-4
+                    """,
+                    (clean_store, sku),
+                ).fetchall()
+                active_batches = len(batch_count_row)
+
+                results.append(
+                    StoreSkuBalance(
+                        store_id=clean_store,
+                        sku_id=sku,
+                        on_hand_stock=round(r["on_hand_stock"], 4),
+                        total_cost_inr=max(0.0, round(r["total_cost_inr"], 2)),
+                        active_batch_count=active_batches,
+                        last_movement_at=r["last_movement_at"],
+                    )
                 )
-            )
-        return results
+            return results
 
     def get_batch_balance(
         self,
@@ -809,47 +810,48 @@ class OperationalInventoryRepository:
         if not clean_store or not clean_sku or not clean_batch:
             return None
 
-        conn = self._get_connection()
-        batch_row = conn.execute(
-            """
-            SELECT b.*, COALESCE(SUM(l.quantity), 0.0) as on_hand
-            FROM inventory_batches b
-            LEFT JOIN inventory_ledger_entries l
-                ON b.store_id = l.store_id AND b.sku_id = l.sku_id AND b.batch_id = l.batch_id
-            WHERE b.store_id = ? AND b.sku_id = ? AND b.batch_id = ?
-            GROUP BY b.store_id, b.sku_id, b.batch_id
-            """,
-            (clean_store, clean_sku, clean_batch),
-        ).fetchone()
+        with self._lock:
+            conn = self._get_connection()
+            batch_row = conn.execute(
+                """
+                SELECT b.*, COALESCE(SUM(l.quantity), 0.0) as on_hand
+                FROM inventory_batches b
+                LEFT JOIN inventory_ledger_entries l
+                    ON b.store_id = l.store_id AND b.sku_id = l.sku_id AND b.batch_id = l.batch_id
+                WHERE b.store_id = ? AND b.sku_id = ? AND b.batch_id = ?
+                GROUP BY b.store_id, b.sku_id, b.batch_id
+                """,
+                (clean_store, clean_sku, clean_batch),
+            ).fetchone()
 
-        if not batch_row:
-            return None
+            if not batch_row:
+                return None
 
-        on_hand = round(float(batch_row["on_hand"]), 4)
-        receipt_date_str = batch_row["receipt_date"]
-        expiry_date_str = batch_row["expiry_date"]
+            on_hand = round(float(batch_row["on_hand"]), 4)
+            receipt_date_str = batch_row["receipt_date"]
+            expiry_date_str = batch_row["expiry_date"]
 
-        ref_date = dt_date.fromisoformat(as_of_date) if as_of_date else dt_datetime.now(timezone.utc).date()
-        exp_date = dt_date.fromisoformat(expiry_date_str)
-        diff_days = (exp_date - ref_date).days
-        is_expired = diff_days <= 0
-        current_remaining = max(0, diff_days)
+            ref_date = dt_date.fromisoformat(as_of_date) if as_of_date else dt_datetime.now(timezone.utc).date()
+            exp_date = dt_date.fromisoformat(expiry_date_str)
+            diff_days = (exp_date - ref_date).days
+            is_expired = diff_days <= 0
+            current_remaining = max(0, diff_days)
 
-        return BatchBalance(
-            store_id=clean_store,
-            sku_id=clean_sku,
-            batch_id=clean_batch,
-            on_hand_quantity=on_hand,
-            receipt_date=receipt_date_str,
-            expiry_date=expiry_date_str,
-            remaining_shelf_life_days_at_receipt=batch_row["remaining_shelf_life_days_at_receipt"],
-            current_remaining_shelf_life_days=current_remaining,
-            is_expired=is_expired,
-            unit_cost=batch_row["unit_cost"],
-            fo_id=batch_row["fo_id"],
-            grn_id=batch_row["grn_id"],
-            fulfilment_batch_id=batch_row["fulfilment_batch_id"],
-        )
+            return BatchBalance(
+                store_id=clean_store,
+                sku_id=clean_sku,
+                batch_id=clean_batch,
+                on_hand_quantity=on_hand,
+                receipt_date=receipt_date_str,
+                expiry_date=expiry_date_str,
+                remaining_shelf_life_days_at_receipt=batch_row["remaining_shelf_life_days_at_receipt"],
+                current_remaining_shelf_life_days=current_remaining,
+                is_expired=is_expired,
+                unit_cost=batch_row["unit_cost"],
+                fo_id=batch_row["fo_id"],
+                grn_id=batch_row["grn_id"],
+                fulfilment_batch_id=batch_row["fulfilment_batch_id"],
+            )
 
     def get_batch_balances(
         self,
@@ -865,56 +867,57 @@ class OperationalInventoryRepository:
         if not clean_store:
             return []
 
-        conn = self._get_connection()
-        query = """
-            SELECT b.*, COALESCE(SUM(l.quantity), 0.0) as on_hand
-            FROM inventory_batches b
-            LEFT JOIN inventory_ledger_entries l
-                ON b.store_id = l.store_id AND b.sku_id = l.sku_id AND b.batch_id = l.batch_id
-            WHERE b.store_id = ?
-        """
-        params: List[Any] = [clean_store]
+        with self._lock:
+            conn = self._get_connection()
+            query = """
+                SELECT b.*, COALESCE(SUM(l.quantity), 0.0) as on_hand
+                FROM inventory_batches b
+                LEFT JOIN inventory_ledger_entries l
+                    ON b.store_id = l.store_id AND b.sku_id = l.sku_id AND b.batch_id = l.batch_id
+                WHERE b.store_id = ?
+            """
+            params: List[Any] = [clean_store]
 
-        if sku_id:
-            query += " AND b.sku_id = ?"
-            params.append(sku_id.strip())
+            if sku_id:
+                query += " AND b.sku_id = ?"
+                params.append(sku_id.strip())
 
-        query += " GROUP BY b.store_id, b.sku_id, b.batch_id"
+            query += " GROUP BY b.store_id, b.sku_id, b.batch_id"
 
-        if not include_zero_balance:
-            query += " HAVING COALESCE(SUM(l.quantity), 0.0) > 1e-4"
+            if not include_zero_balance:
+                query += " HAVING COALESCE(SUM(l.quantity), 0.0) > 1e-4"
 
-        query += " ORDER BY b.expiry_date ASC, b.batch_id ASC"
+            query += " ORDER BY b.expiry_date ASC, b.batch_id ASC"
 
-        rows = conn.execute(query, params).fetchall()
-        ref_date = dt_date.fromisoformat(as_of_date) if as_of_date else dt_datetime.now(timezone.utc).date()
+            rows = conn.execute(query, params).fetchall()
+            ref_date = dt_date.fromisoformat(as_of_date) if as_of_date else dt_datetime.now(timezone.utc).date()
 
-        results: List[BatchBalance] = []
-        for r in rows:
-            on_hand = round(float(r["on_hand"]), 4)
-            exp_date = dt_date.fromisoformat(r["expiry_date"])
-            diff_days = (exp_date - ref_date).days
-            is_expired = diff_days <= 0
-            current_remaining = max(0, diff_days)
+            results: List[BatchBalance] = []
+            for r in rows:
+                on_hand = round(float(r["on_hand"]), 4)
+                exp_date = dt_date.fromisoformat(r["expiry_date"])
+                diff_days = (exp_date - ref_date).days
+                is_expired = diff_days <= 0
+                current_remaining = max(0, diff_days)
 
-            results.append(
-                BatchBalance(
-                    store_id=r["store_id"],
-                    sku_id=r["sku_id"],
-                    batch_id=r["batch_id"],
-                    on_hand_quantity=on_hand,
-                    receipt_date=r["receipt_date"],
-                    expiry_date=r["expiry_date"],
-                    remaining_shelf_life_days_at_receipt=r["remaining_shelf_life_days_at_receipt"],
-                    current_remaining_shelf_life_days=current_remaining,
-                    is_expired=is_expired,
-                    unit_cost=r["unit_cost"],
-                    fo_id=r["fo_id"],
-                    grn_id=r["grn_id"],
-                    fulfilment_batch_id=r["fulfilment_batch_id"],
+                results.append(
+                    BatchBalance(
+                        store_id=r["store_id"],
+                        sku_id=r["sku_id"],
+                        batch_id=r["batch_id"],
+                        on_hand_quantity=on_hand,
+                        receipt_date=r["receipt_date"],
+                        expiry_date=r["expiry_date"],
+                        remaining_shelf_life_days_at_receipt=r["remaining_shelf_life_days_at_receipt"],
+                        current_remaining_shelf_life_days=current_remaining,
+                        is_expired=is_expired,
+                        unit_cost=r["unit_cost"],
+                        fo_id=r["fo_id"],
+                        grn_id=r["grn_id"],
+                        fulfilment_batch_id=r["fulfilment_batch_id"],
+                    )
                 )
-            )
-        return results
+            return results
 
     def get_expiring_batches(
         self,
